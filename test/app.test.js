@@ -5,6 +5,7 @@ import { createPlankAnalyzer } from '../src/exercises/plank.js';
 import { createWorkoutController } from '../src/ui/app.js';
 
 function createHarness({
+  startCamera: acquireCamera,
   startTracker = async () => {},
   createAnalyzers = () => ({
     squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
@@ -28,6 +29,9 @@ function createHarness({
     },
     startCamera: async () => {
       cameraStarts += 1;
+      if (acquireCamera) {
+        return acquireCamera({ video, tracks });
+      }
       const track = {
         listeners: new Map(),
         addEventListener(name, callback) {
@@ -43,12 +47,14 @@ function createHarness({
       tracks.push(track);
       return { getTracks: () => [track], getVideoTracks: () => [track] };
     },
-    stopCamera(stream) {
+    stopCamera(stream, videoElement) {
       cameraStops += 1;
       for (const track of stream?.getTracks?.() ?? []) {
         track.stop();
       }
-      video.srcObject = null;
+      if (videoElement) {
+        videoElement.srcObject = null;
+      }
     },
     createPoseTracker(callbacks) {
       const tracker = {
@@ -81,6 +87,7 @@ function createHarness({
 
   return {
     controller,
+    video,
     states,
     trackers,
     tracks,
@@ -204,6 +211,47 @@ test('starting after End creates a new tracker instance', async () => {
   assert.equal(harness.trackers[0].stopCalls, 1);
   assert.equal(harness.cameraStarts, 2);
   assert.equal(harness.controller.getState().workoutStatus, 'running');
+});
+
+test('late camera acquisition after End cannot release the new session resources', async () => {
+  const pendingAcquisitions = [];
+  const harness = createHarness({
+    startCamera: ({ video }) => new Promise((resolve) => {
+      pendingAcquisitions.push((stream) => {
+        video.srcObject = stream;
+        resolve(stream);
+      });
+    }),
+  });
+  const makeStream = () => {
+    const track = { stop() { this.stopped = true; } };
+    return {
+      track,
+      getTracks: () => [track],
+      getVideoTracks: () => [track],
+    };
+  };
+
+  const oldStart = harness.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pendingAcquisitions.length, 1);
+  await harness.controller.end();
+
+  const currentStart = harness.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pendingAcquisitions.length, 2);
+  const currentStream = makeStream();
+  pendingAcquisitions[1](currentStream);
+  await currentStart;
+
+  const staleStream = makeStream();
+  pendingAcquisitions[0](staleStream);
+  await oldStart;
+
+  assert.equal(harness.video.srcObject, currentStream);
+  assert.equal(currentStream.track.stopped, undefined);
+  assert.equal(harness.trackers[1].stopCalls, 0);
+  assert.equal(staleStream.track.stopped, true);
 });
 
 test('Home navigation ends an active workout and releases its camera', async () => {

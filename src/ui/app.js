@@ -270,7 +270,10 @@ export function createWorkoutController({
       tracker = createdTracker;
       const acquiredStream = await acquireCamera(video);
       if (runGeneration !== generation) {
-        releaseCamera(acquiredStream, video);
+        if (video?.srcObject === acquiredStream) {
+          video.srcObject = stream ?? null;
+        }
+        releaseCamera(acquiredStream, null);
         createdTracker.stop();
         return false;
       }
