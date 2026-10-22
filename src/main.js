@@ -1,4 +1,5 @@
 import { mountApp } from "./ui/app.js";
 import "./styles.css";
 
-mountApp(document.querySelector("#app"));
+const appRoot = document.getElementById("app");
+mountApp(appRoot);
