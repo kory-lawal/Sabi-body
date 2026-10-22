@@ -3,6 +3,7 @@ export function createSpeechCoach({
   Utterance,
   now = () => Date.now(),
   cooldownMs = 5000,
+  onError = () => {},
 }) {
   let enabled = false;
   let lastSpokenAt = -Infinity;
@@ -37,6 +38,9 @@ export function createSpeechCoach({
     try {
       const utterance = new Utterance(text);
       utterance.lang = 'en';
+      utterance.onerror = (event) => {
+        onError(new Error('Speech synthesis failed.', { cause: event }));
+      };
       synthesis.speak(utterance);
       lastSpokenAt = timestamp;
     } catch (error) {

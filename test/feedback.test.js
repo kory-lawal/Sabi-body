@@ -170,6 +170,26 @@ test('speech API failures are surfaced to the caller', () => {
   });
 });
 
+test('asynchronous utterance errors are surfaced to the caller', () => {
+  const harness = createSpeechHarness();
+  const errors = [];
+  const coach = createSpeechCoach({
+    ...harness,
+    onError(error) {
+      errors.push(error);
+    },
+  });
+  coach.setEnabled(true);
+  coach.speak('great-job', 'Great work!', 'en');
+
+  const event = { error: 'synthesis-failed' };
+  harness.spoken[0].onerror(event);
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /speech synthesis failed/i);
+  assert.equal(errors[0].cause, event);
+});
+
 test('YarnGPT client posts only the message ID and language to the endpoint', async () => {
   let request;
   const client = createYarnGPTClient({
