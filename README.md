@@ -57,21 +57,26 @@ affect detection. Follow the on-screen prompts to fit the relevant body parts
 in frame. “Full body visible” is a visibility check, not a judgment that a
 movement is safe or correctly performed.
 
-- **Squats:** The analyzer measures the visible knee angle at the hip-knee-ankle
-  points. A repetition is counted after it observes a standing angle of at
-  least 160°, a descent to 110° or less, and a return to at least 160°. It uses
-  both reliable sides when available, or the side with stronger visibility
-  evidence when only one side is usable.
+- **Squats:** Stand side-on to the camera with your hip, knee, and ankle
+  visible. The analyzer measures the projected 2D knee angle at the
+  hip-knee-ankle points. A repetition is counted after it observes a standing
+  angle of at least 160°, a descent to 110° or less, and a return to at least
+  160°. It uses both reliable sides when available, or the side with stronger
+  visibility evidence when only one side is usable. A frontal view may hide
+  knee flexion that occurs in depth, so it may not reach the counting
+  thresholds.
 - **Jumping jacks:** The analyzer first waits for a closed starting position.
   It recognizes closed arms (wrists below shoulders) and feet no wider than
   1.15 times hip width, then an open position (wrists above shoulders and feet
   at least 1.35 times hip width). It counts once when the movement returns from
   open to closed.
 - **Plank:** The analyzer uses a visible shoulder-hip-ankle angle from either
-  side. It marks the position aligned within 20° of a straight line and adds
-  elapsed time only while alignment remains visible. Missing or out-of-line
-  frames break timing continuity; brief frame gaps are capped so a stalled
-  frame does not add a large amount of time.
+  side and requires the shoulder-to-ankle image axis to be horizontal: its
+  absolute horizontal displacement must exceed 1.5 times the absolute
+  vertical displacement. It marks the position aligned within 20° of a
+  straight line and adds elapsed time only while both checks pass. Missing,
+  out-of-line, or non-horizontal frames break timing continuity; brief frame
+  gaps are capped so a stalled frame does not add a large amount of time.
 
 These simple geometric thresholds may not fit every body, camera setup, or
 variation of an exercise. Stop if a movement feels uncomfortable and seek
@@ -100,10 +105,11 @@ touch target. Written feedback remains available independently of spoken
 feedback.
 
 For tracking, place the device so the instructions' relevant landmarks remain
-in view. Squats need visible hips, knees, and ankles; jumping jacks need hands
-and feet inside the frame; planks need a side view with shoulder, hip, and
-ankle visible. Camera access can be blocked by browser/site settings, another
-app using the camera, missing hardware, or a non-secure origin. Use
+in view. Squats require standing side-on with hip, knee, and ankle visible;
+the 2D image-plane angle can miss knee flexion in a frontal view. Jumping jacks
+need hands and feet inside the frame; planks need a side view with shoulder,
+hip, and ankle visible. Camera access can be blocked by browser/site settings,
+another app using the camera, missing hardware, or a non-secure origin. Use
 `localhost` while developing or serve the app over HTTPS, grant access in the
 browser prompt, and use the displayed retry guidance if startup fails. Spoken
 feedback uses the browser's speech-synthesis support when available and is

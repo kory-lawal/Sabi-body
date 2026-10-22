@@ -2,6 +2,7 @@ import { angleAt, isVisible } from './geometry.js';
 
 const VISIBILITY_THRESHOLD = 0.55;
 const ALIGNMENT_TOLERANCE_DEGREES = 20;
+const MIN_HORIZONTAL_TO_VERTICAL_RATIO = 1.5;
 const MAX_INTERVAL_MS = 200;
 
 const SIDES = [
@@ -9,7 +10,7 @@ const SIDES = [
   { shoulder: 12, hip: 24, ankle: 28 },
 ];
 
-function sideAngle(landmarks, indices) {
+function sidePose(landmarks, indices) {
   const points = [
     landmarks?.[indices.shoulder],
     landmarks?.[indices.hip],
@@ -20,14 +21,17 @@ function sideAngle(landmarks, indices) {
     return null;
   }
 
-  return angleAt(points[0], points[1], points[2]);
+  const angle = angleAt(points[0], points[1], points[2]);
+  return angle === null
+    ? null
+    : { angle, shoulder: points[0], ankle: points[2] };
 }
 
-function plankAngle(landmarks) {
+function plankPose(landmarks) {
   for (const side of SIDES) {
-    const angle = sideAngle(landmarks, side);
-    if (angle !== null) {
-      return angle;
+    const pose = sidePose(landmarks, side);
+    if (pose !== null) {
+      return pose;
     }
   }
   return null;
@@ -38,9 +42,9 @@ export function createPlankAnalyzer() {
   let previousAlignedAt = null;
 
   function update(landmarks, nowMs) {
-    const angle = plankAngle(landmarks);
+    const pose = plankPose(landmarks);
 
-    if (angle === null) {
+    if (pose === null) {
       previousAlignedAt = null;
       return {
         elapsedMs,
@@ -50,7 +54,15 @@ export function createPlankAnalyzer() {
       };
     }
 
-    if (Math.abs(angle - 180) > ALIGNMENT_TOLERANCE_DEGREES) {
+    const { angle, shoulder, ankle } = pose;
+    const horizontalDisplacement = Math.abs(shoulder.x - ankle.x);
+    const verticalDisplacement = Math.abs(shoulder.y - ankle.y);
+    const isStraight = Math.abs(angle - 180) <= ALIGNMENT_TOLERANCE_DEGREES;
+    const isHorizontal =
+      horizontalDisplacement >
+      MIN_HORIZONTAL_TO_VERTICAL_RATIO * verticalDisplacement;
+
+    if (!isStraight || !isHorizontal) {
       previousAlignedAt = null;
       return {
         elapsedMs,

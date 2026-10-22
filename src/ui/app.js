@@ -11,8 +11,8 @@ const EXERCISES = {
   squats: {
     name: 'Squats',
     description: 'Build a steady rhythm with a comfortable squat and return.',
-    instruction: 'Stand side-on or facing the camera, with your full body in view.',
-    cameraInstruction: 'Step back until your head, hips, knees, and ankles are visible.',
+    instruction: 'Stand side-on to the camera with your hip, knee, and ankle visible.',
+    cameraInstruction: 'Keep your hip, knee, and ankle in view from the side.',
     progressLabel: 'Repetitions',
   },
   'jumping-jacks': {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createPlankAnalyzer } from '../src/exercises/plank.js';
-import { createWorkoutController } from '../src/ui/app.js';
+import { createWorkoutController, mountApp } from '../src/ui/app.js';
 
 function createHarness({
   startCamera: acquireCamera,
@@ -263,4 +263,32 @@ test('Home navigation ends an active workout and releases its camera', async () 
   assert.equal(harness.controller.getState().workoutStatus, 'idle');
   assert.equal(harness.cameraStops, 1);
   assert.equal(harness.trackers[0].stopCalls, 1);
+});
+
+test('squat workout instructions require a side-on view with visible joints', () => {
+  const listeners = new Map();
+  const root = {
+    innerHTML: '',
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  mountApp(root);
+  listeners.get('click')({
+    target: {
+      closest: () => ({
+        dataset: { action: 'choose-exercise', exercise: 'squats' },
+      }),
+    },
+  });
+
+  assert.match(root.innerHTML, /Stand side-on to the camera/);
+  assert.match(root.innerHTML, /hip, knee, and ankle/);
+  assert.doesNotMatch(root.innerHTML, /facing the camera/);
 });

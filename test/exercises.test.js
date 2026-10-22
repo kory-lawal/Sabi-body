@@ -62,7 +62,11 @@ function createJumpingJackLandmarks(pose) {
   return landmarks;
 }
 
-function createPlankLandmarks({ aligned = true, side = 'left' } = {}) {
+function createPlankLandmarks({
+  aligned = true,
+  orientation = 'horizontal',
+  side = 'left',
+} = {}) {
   const landmarks = Array.from({ length: 33 }, () => ({
     x: 0.5,
     y: 0.5,
@@ -73,14 +77,15 @@ function createPlankLandmarks({ aligned = true, side = 'left' } = {}) {
       ? { shoulder: 11, hip: 23, ankle: 27 }
       : { shoulder: 12, hip: 24, ankle: 28 };
 
-  landmarks[indices.shoulder] = {
-    x: 0.2,
-    y: 0.5,
-    visibility: 0.9,
-  };
+  landmarks[indices.shoulder] =
+    orientation === 'vertical'
+      ? { x: 0.5, y: 0.2, visibility: 0.9 }
+      : { x: 0.2, y: 0.5, visibility: 0.9 };
   landmarks[indices.hip] = { x: 0.5, y: 0.5, visibility: 0.9 };
   landmarks[indices.ankle] = aligned
-    ? { x: 0.8, y: 0.5, visibility: 0.9 }
+    ? orientation === 'vertical'
+      ? { x: 0.5, y: 0.8, visibility: 0.9 }
+      : { x: 0.8, y: 0.5, visibility: 0.9 }
     : { x: 0.5, y: 0.2, visibility: 0.9 };
 
   return landmarks;
@@ -278,6 +283,46 @@ test('a straight side-on plank accrues elapsed milliseconds', () => {
     state: 'aligned',
     feedbackId: 'aligned',
   });
+});
+
+test('a straight vertical standing pose does not accrue plank time', () => {
+  const analyzer = createPlankAnalyzer();
+  analyzer.update(createPlankLandmarks({ orientation: 'vertical' }), 1000);
+
+  assert.deepEqual(
+    analyzer.update(
+      createPlankLandmarks({ orientation: 'vertical' }),
+      1100,
+    ),
+    {
+      elapsedMs: 0,
+      active: false,
+      state: 'adjust-alignment',
+      feedbackId: 'adjust-alignment',
+    },
+  );
+});
+
+test('invalid plank orientation pauses timing until a horizontal pose returns', () => {
+  const analyzer = createPlankAnalyzer();
+  analyzer.update(createPlankLandmarks(), 1000);
+  analyzer.update(createPlankLandmarks(), 1100);
+
+  assert.deepEqual(
+    analyzer.update(
+      createPlankLandmarks({ orientation: 'vertical' }),
+      1200,
+    ),
+    {
+      elapsedMs: 100,
+      active: false,
+      state: 'adjust-alignment',
+      feedbackId: 'adjust-alignment',
+    },
+  );
+
+  assert.equal(analyzer.update(createPlankLandmarks(), 1300).elapsedMs, 100);
+  assert.equal(analyzer.update(createPlankLandmarks(), 1400).elapsedMs, 200);
 });
 
 test('plank analysis falls back to a reliable right-side pose', () => {

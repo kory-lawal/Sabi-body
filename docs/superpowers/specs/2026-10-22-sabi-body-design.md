@@ -80,9 +80,11 @@ advance a state, count a repetition, or accrue plank time.
 
 ### Squats
 
-- Compute left/right hip-knee-ankle interior angles from normalized landmark
-  coordinates; use the reliable side, preferring a stable average when both
-  sides are visible.
+- Require the user to stand side-on to the camera with hip, knee, and ankle
+  visible. Compute left/right hip-knee-ankle interior angles from normalized
+  image-plane coordinates; use the reliable side, preferring a stable average
+  when both sides are visible. Because this measurement uses only the 2D
+  projection, a frontal view may hide knee flexion occurring in depth.
 - Use a state machine: `waiting-for-standing` → `standing` → `lowering` →
   `bottom` → `returning` → `standing`. Count once only on a complete return to
   standing after a squat-depth threshold was reached.
@@ -105,11 +107,14 @@ advance a state, count a repetition, or accrue plank time.
 ### Plank
 
 - Require visible shoulder, hip, and ankle points from a side-on view.
-- Estimate shoulder–hip–ankle alignment using the angle at the hip. Start or
-  resume elapsed time only when the landmarks are reliable and the angle is
-  within a centralized approximate alignment range.
+- Estimate shoulder–hip–ankle alignment using the angle at the hip. Also
+  require the absolute shoulder-to-ankle horizontal displacement to exceed
+  1.5 times its absolute vertical displacement, distinguishing the instructed
+  horizontal plank axis from a straight standing pose. Start or resume elapsed
+  time only when the landmarks are reliable and both checks pass.
 - Pause accrual when the pose is lost or outside the alignment range. Provide a
-  simple alignment reminder; do not claim safety or diagnose posture.
+  simple adjustment reminder for either failed alignment check; do not claim
+  safety, medical correctness, or diagnose posture.
 - Format time as minutes and seconds. Pausing the workout also pauses elapsed
   time; resetting sets elapsed time to zero.
 
@@ -162,6 +167,8 @@ audio or text. Browser code must never contain API keys.
 - Camera angle, clothing, lighting, device performance, and landmark confidence
   affect estimates. Clear positioning guidance and reliable-landmark gates
   reduce false counts but cannot make a single camera view universally precise.
+  Squat analysis uses projected 2D coordinates, so it requires a side-on view;
+  frontal knee motion in depth may not reach its projected-angle thresholds.
 - Synchronous inference may be costly on some devices. Keep inference to one
   animation loop and one pose.
 - Browser speech voices vary by operating system and browser; written feedback
