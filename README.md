@@ -109,6 +109,10 @@ browser prompt, and use the displayed retry guidance if startup fails. Spoken
 feedback uses the browser's speech-synthesis support when available and is
 off by default.
 
+First-time users should check real-camera behavior on their own supported
+browser and device. The app requests camera permission only after **Start**;
+automated tests use test doubles and do not replace this real-camera check.
+
 ## Languages and speech
 
 The language menu offers **English**, **Yoruba**, **Igbo**, **Hausa**, and

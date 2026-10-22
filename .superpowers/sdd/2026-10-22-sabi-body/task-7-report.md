@@ -72,32 +72,63 @@ dist/assets/index-Ci4AJPuT.js   171.28 kB │ gzip: 52.65 kB
 
 ## Local browser checks
 
-Started the project with `npm run dev`; Vite reported
-`http://localhost:5173/`. The browser loaded the Sabi Body Home screen.
-
-- Home showed its exercise choices and language selector. No camera prompt
-  appeared; Start was not pressed.
-- Selected Squats, Jumping Jacks, and Plank in turn. Each opened the matching
-  exercise heading and instructions. In all three, the camera badge remained
-  “Camera off” and the preview placeholder remained visible.
-- Selected Yoruba and observed the explicit “English text shown; translation
-  unavailable.” fallback. Toggled Spoken coaching on and observed its checked
-  state; no workout was started and no audio was exercised.
-- Checked the workout view at a 390 × 844 CSS-pixel viewport. The document did
-  not overflow horizontally (375 px document/client width within the 390 px
-  viewport). Workout buttons measured 46 px high; Start and End spanned 351 px,
-  and Pause/Resume/Reset each measured 171 px.
+The integrated browser loaded the Sabi Body Home screen and the Plank workout
+view. On the Plank view, the camera preview remained off and Start was
+available. No camera permission prompt appeared because Start was not pressed.
 
 ## Limitations and unverified behavior
 
-The browser session deliberately did not press Start, to avoid triggering a
-camera permission request as instructed. Therefore it did not exercise camera
-permission grant/denial, a device without a camera, live video, actual model
-download/inference, skeleton overlay from real detections, full-body/progress
-updates from a person, audible speech, or live Pause/Resume/Reset/End cleanup.
-Those hardware/model/browser behaviors are not claimed as manually verified.
-The automated tests exercise the relevant analyzer, camera, tracker, and
-workout-controller paths with test doubles; they do not replace a real-device
-camera check.
+Start was not pressed because no user-granted camera permission was available
+or authorized for this check, and physical-camera access was not granted.
+Consequently, camera permission grant or denial, unavailable-camera handling,
+live video, model loading or inference, detections or skeleton overlay,
+full-body/progress updates, speech playback, and camera cleanup were not
+manually tested. Do not treat the browser check as evidence for those
+behaviors. Automated tests use test doubles and do not substitute for a
+real-camera check on a supported browser and device.
 
 No directly related implementation defect was exposed by the checks.
+
+## Task review fix pass
+
+Corrected the manual-validation account above: removed the inaccurate
+permission rationale and limited the browser-check claims to the observed Home
+and Plank views, with preview off and Start available. Added a README note
+advising first-time users to verify real-camera behavior on their own supported
+browser/device and clarifying the Start permission boundary and test doubles.
+
+### Validation
+
+`npm test` and `npm run build` were rerun for this documentation-only fix.
+Both commands exited with code `0`.
+
+`npm test` exact summary:
+
+```text
+1..51
+# tests 51
+# suites 0
+# pass 51
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 428.1928
+```
+
+`npm run build` exact output:
+
+```text
+> sabi-body-implementation@1.0.0 build
+> vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 15 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.63 kB │ gzip:  0.38 kB
+dist/assets/index-l4Sq1Wpp.css   11.28 kB │ gzip:  3.30 kB
+dist/assets/index-Ci4AJPuT.js   171.28 kB │ gzip: 52.65 kB
+✓ built in 2.96s
+```
