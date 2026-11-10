@@ -57,6 +57,11 @@ the send interval to measured inference throughput. A disconnected socket,
 invalid result, or unavailable model is surfaced as a pose-service error; it
 does not silently fall back to another detector.
 
+The initial performance goal is 8–15 pose updates per second. Measure actual
+throughput and latency on the available hardware; if the target is not met,
+adjust image size or send interval and report the resulting trade-off rather
+than claiming the target was achieved.
+
 ### Backend inference lifecycle
 
 FastAPI startup loads the selected Ultralytics pose model once. Configuration
