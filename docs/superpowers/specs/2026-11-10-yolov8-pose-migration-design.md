@@ -155,8 +155,8 @@ uses the local backend rather than implying frames never leave the browser.
 
 ## Dependencies, assets, and licensing
 
-Add compatible Ultralytics/PyTorch dependencies while retaining one
-headless-OpenCV distribution and the existing FastAPI/NumPy stack. Keep the
+Add compatible Ultralytics/PyTorch dependencies while retaining exactly one
+OpenCV distribution (`opencv-python`) and the existing FastAPI/NumPy stack. Keep the
 selected pretrained `.pt` weights in an ignored local model directory; do not
 commit large weights. After integration checks pass, remove MediaPipe imports,
 dependencies, and unused local MediaPipe model/WASM assets without deleting
