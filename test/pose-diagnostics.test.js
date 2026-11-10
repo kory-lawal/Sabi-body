@@ -34,6 +34,17 @@ test('landmark diagnostics retain sparse indices and represent absent pose data 
   assert.deepEqual(serializeLandmarkDiagnostics(undefined), []);
 });
 
+test('landmark diagnostics apply minimum confidence and normalized bounds', () => {
+  const [lowConfidence, outOfBounds] = serializeLandmarkDiagnostics([
+    { x: 0.5, y: 0.5, visibility: 0.55, presence: 0.9 },
+    { x: 1.01, y: 0.5, visibility: 0.9, presence: 0.9 },
+  ]);
+
+  assert.equal(lowConfidence.confidence, 0.55);
+  assert.equal(lowConfidence.visible, false);
+  assert.equal(outOfBounds.visible, false);
+});
+
 test('pose diagnostics preserve existing fields and add serialized landmarks', () => {
   const state = {
     cameraStatus: 'ready',

@@ -28,27 +28,40 @@ export function angleAt(a, b, c) {
   return (Math.acos(clampedCosine) * 180) / Math.PI;
 }
 
-export function isVisible(landmark, threshold = 0.55) {
-  if (
-    landmark === null ||
-    typeof landmark !== 'object' ||
-    !Number.isFinite(landmark.x) ||
-    !Number.isFinite(landmark.y)
-  ) {
-    return false;
+export function getLandmarkConfidence(landmark) {
+  if (landmark === null || typeof landmark !== 'object') {
+    return null;
   }
 
   const scores = [landmark.visibility, landmark.presence].filter(
     Number.isFinite,
-  );
-  return scores.length > 0 && Math.max(...scores) >= threshold;
+);
+  return scores.length ? Math.min(...scores) : null;
+}
+
+export function isVisible(landmark, threshold = 0.6) {
+  if (
+    landmark === null ||
+    typeof landmark !== 'object' ||
+    !Number.isFinite(landmark.x) ||
+    !Number.isFinite(landmark.y) ||
+    landmark.x < 0 ||
+    landmark.x > 1 ||
+    landmark.y < 0 ||
+    landmark.y > 1
+  ) {
+    return false;
+  }
+
+  const confidence = getLandmarkConfidence(landmark);
+  return confidence !== null && confidence >= threshold;
 }
 
 export function hasFullBodyVisible(landmarks) {
   return (
     Array.isArray(landmarks) &&
     FULL_BODY_LANDMARK_INDICES.every((index) =>
-      isVisible(landmarks[index]),
+      isVisible(landmarks[index], 0.55),
     )
   );
 }
