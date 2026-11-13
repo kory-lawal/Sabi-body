@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/*",
+      "destination": "https://sabi-body-1.onrender.com/api/*"
+    }
+  ]
+}
