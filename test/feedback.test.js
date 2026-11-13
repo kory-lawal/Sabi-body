@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { LANGUAGES, translateMessage } from '../src/feedback/messages.js';
 import { createSpeechCoach } from '../src/feedback/speech.js';
-import { createYarnGPTClient } from '../src/services/yarngpt.js';
+import { createVoiceClient } from '../src/services/voice-client.js';
 
 const EXPECTED_LANGUAGE_CODES = ['en', 'yo', 'ig', 'ha', 'pcm'];
 
@@ -22,14 +22,65 @@ test('English message lookup returns the catalog text without fallback', () => {
   assert.equal(result.isFallback, false);
 });
 
+test('energetic message variants resolve for every language with draft metadata', () => {
+  for (const languageCode of EXPECTED_LANGUAGE_CODES) {
+    const result = translateMessage('energetic-great-job', languageCode);
+    assert.ok(result.text.length > 0);
+    assert.equal(result.isFallback, false);
+    assert.equal(result.translationStatus, languageCode === 'en' ? 'verified' : 'unverified');
+  }
+});
+
+test('localized milestone messages interpolate only approved values', () => {
+  const result = translateMessage('milestone-reps', 'yo', {
+    count: 5,
+    target: 20,
+    unexpected: 'ignored',
+  });
+
+  assert.match(result.text, /5/);
+  assert.match(result.text, /20/);
+  assert.doesNotMatch(result.text, /ignored/);
+  assert.equal(result.translationStatus, 'unverified');
+});
+
+test('coaching dictionary contains the required exercise and voice-test events in every language', () => {
+  for (const messageId of [
+    'welcome',
+    'camera-positioning',
+    'workout-countdown',
+    'repetition-count',
+    'remaining-reps',
+    'halfway',
+    'final-repetition',
+    'workout-paused',
+    'workout-resumed',
+    'test-count-sequence',
+    'test-positioning',
+    'test-completion',
+  ]) {
+    for (const { code } of LANGUAGES) {
+      const result = translateMessage(messageId, code, { count: 3, remaining: 5, target: 10 });
+      assert.ok(result.text.length > 0, `${messageId}/${code} should have readable text`);
+      assert.equal(result.isFallback, false, `${messageId}/${code} should not silently fall back`);
+      assert.equal(result.translationStatus, code === 'en' ? 'verified' : 'unverified');
+    }
+  }
+});
+
 test('untranslated supported languages fall back to English', () => {
-  const english = translateMessage('great-job', 'en');
+  const english = translateMessage('camera-error', 'en');
 
   for (const languageCode of ['yo', 'ig', 'ha', 'pcm']) {
-    assert.deepEqual(translateMessage('great-job', languageCode), {
-      text: english.text,
-      isFallback: true,
-    });
+    const result = translateMessage('camera-error', languageCode);
+    assert.equal(result.text, english.text);
+    assert.equal(result.isFallback, true);
+  }
+});
+
+test('translated draft messages disclose their unverified status', () => {
+  for (const languageCode of ['yo', 'ig', 'ha', 'pcm']) {
+    assert.equal(translateMessage('great-job', languageCode).translationStatus, 'unverified');
   }
 });
 
@@ -60,9 +111,22 @@ test('all analyzer message identifiers have English text', () => {
     'adjust-alignment',
     'camera-error',
     'exercise-completed',
+    'alternate-legs',
   ]) {
     assert.ok(translateMessage(messageId, 'en').text);
     assert.equal(translateMessage(messageId, 'en').isFallback, false);
+  }
+});
+
+test('alternate-leg coaching is available in English and explicitly falls back elsewhere', () => {
+  const english = translateMessage('alternate-legs', 'en');
+  assert.match(english.text, /opposite leg/i);
+  assert.equal(english.isFallback, false);
+
+  for (const languageCode of ['yo', 'ig', 'ha', 'pcm']) {
+    const localized = translateMessage('alternate-legs', languageCode);
+    assert.equal(localized.text, english.text);
+    assert.equal(localized.isFallback, true);
   }
 });
 
@@ -190,10 +254,10 @@ test('asynchronous utterance errors are surfaced to the caller', () => {
   assert.equal(errors[0].cause, event);
 });
 
-test('YarnGPT client posts only the message ID and language to the endpoint', async () => {
+test('voice client posts only the message ID and language to the endpoint', async () => {
   let request;
-  const client = createYarnGPTClient({
-    endpoint: '/api/yarngpt',
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
     fetchImpl: async (...args) => {
       request = args;
       return {
@@ -209,7 +273,7 @@ test('YarnGPT client posts only the message ID and language to the endpoint', as
     await client.synthesize({ messageId: 'great-job', language: 'en' }),
     { text: 'Great work!' },
   );
-  assert.equal(request[0], '/api/yarngpt');
+  assert.equal(request[0], '/api/coach/audio');
   assert.equal(request[1].method, 'POST');
   assert.equal(request[1].headers['Content-Type'], 'application/json');
   assert.deepEqual(JSON.parse(request[1].body), {
@@ -218,17 +282,112 @@ test('YarnGPT client posts only the message ID and language to the endpoint', as
   });
 });
 
-test('YarnGPT client rejects empty and cross-origin endpoints', () => {
-  assert.throws(() => createYarnGPTClient({ endpoint: '' }), /non-empty/i);
+test('voice audio requests deduplicate identical text and use an idempotency key', async () => {
+  let requestCount = 0;
+  let request;
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    createIdempotencyKey: () => 'coach-event-1',
+    fetchImpl: async (...args) => {
+      requestCount += 1;
+      request = args;
+      return {
+        ok: true,
+        headers: { get: () => 'audio/mpeg' },
+        async blob() {
+          return new Blob(['audio bytes'], { type: 'audio/mpeg' });
+        },
+      };
+    },
+  });
+
+  const payload = {
+    text: 'O ṣe dáadáa!',
+    language: 'yo',
+    voice: 'voice-yo',
+  };
+  const [firstAudio, secondAudio] = await Promise.all([
+    client.synthesizeAudio(payload),
+    client.synthesizeAudio(payload),
+  ]);
+
+  assert.equal(requestCount, 1);
+  assert.equal(firstAudio, secondAudio);
+  assert.equal(request[0], '/api/coach/audio');
+  assert.equal(request[1].headers['Idempotency-Key'], 'coach-event-1');
+  assert.deepEqual(JSON.parse(request[1].body), payload);
+  assert.equal(firstAudio.type, 'audio/mpeg');
+});
+
+test('voice audio cache distinguishes localized text and selected voice', async () => {
+  let requestCount = 0;
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    fetchImpl: async () => {
+      requestCount += 1;
+      return new Response(new Uint8Array([requestCount]), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' },
+      });
+    },
+  });
+
+  await client.synthesizeAudio({ text: 'O ṣe dáadáa!', language: 'yo', voice: 'voice-yo' });
+  await client.synthesizeAudio({ text: 'Ị mere nke ọma!', language: 'ig', voice: 'voice-ig' });
+  await client.synthesizeAudio({ text: 'O ṣe dáadáa!', language: 'yo', voice: 'another-voice' });
+
+  assert.equal(requestCount, 3);
+});
+
+test('voice client retrieves discovered voices through the same-origin backend', async () => {
+  let request;
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    voicesEndpoint: '/api/coach/voices',
+    fetchImpl: async (...args) => {
+      request = args;
+      return {
+        ok: true,
+        async json() {
+          return { voices: [{ id: 'voice-yo', languages: ['yo'] }] };
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(await client.listVoices(), [{ id: 'voice-yo', languages: ['yo'] }]);
+  assert.equal(request[0], '/api/coach/voices');
+  assert.equal(request[1].method, 'GET');
+});
+
+test('voice catalogue client preserves backend configuration errors', async () => {
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: {
+        code: 'VOICE_CATALOG_UNAVAILABLE',
+        message: 'NAIJALINGO_API_KEY is not configured in the backend environment.',
+      },
+    }), { status: 503, headers: { 'Content-Type': 'application/json' } }),
+  });
+
+  await assert.rejects(
+    client.listVoices(),
+    /VOICE_CATALOG_UNAVAILABLE.*NAIJALINGO_API_KEY is not configured/i,
+  );
+});
+
+test('voice client rejects empty and cross-origin endpoints', () => {
+  assert.throws(() => createVoiceClient({ endpoint: '' }), /non-empty/i);
   assert.throws(
-    () => createYarnGPTClient({ endpoint: 'https://example.com/api' }),
+    () => createVoiceClient({ endpoint: 'https://example.com/api' }),
     /same-origin/i,
   );
 });
 
-test('YarnGPT client reports HTTP and network failures descriptively', async () => {
-  const rejected = createYarnGPTClient({
-    endpoint: '/api/yarngpt',
+test('voice client reports HTTP and network failures descriptively', async () => {
+  const rejected = createVoiceClient({
+    endpoint: '/api/coach/audio',
     fetchImpl: async () => ({ ok: false, status: 503 }),
   });
   await assert.rejects(
@@ -237,8 +396,8 @@ test('YarnGPT client reports HTTP and network failures descriptively', async () 
   );
 
   const unavailable = new Error('connection refused');
-  const disconnected = createYarnGPTClient({
-    endpoint: '/api/yarngpt',
+  const disconnected = createVoiceClient({
+    endpoint: '/api/coach/audio',
     fetchImpl: async () => {
       throw unavailable;
     },
@@ -246,5 +405,52 @@ test('YarnGPT client reports HTTP and network failures descriptively', async () 
   await assert.rejects(
     disconnected.synthesize({ messageId: 'great-job', language: 'en' }),
     /network|fetch/i,
+  );
+});
+
+test('voice audio client preserves actionable backend error envelopes', async () => {
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: {
+        code: 'VOICE_SERVICE_NOT_CONFIGURED',
+        message: 'Backend key is missing.',
+        user_message: 'Configure the backend key.',
+      },
+    }), { status: 503, headers: { 'Content-Type': 'application/json' } }),
+  });
+
+  test('voice audio client shows FastAPI detail errors', async () => {
+    const client = createVoiceClient({
+      endpoint: '/api/coach/audio',
+      fetchImpl: async () => new Response(JSON.stringify({
+        detail: [{ msg: 'Field required', loc: ['body', 'text'] }],
+      }), { status: 422, headers: { 'Content-Type': 'application/json' } }),
+    });
+
+    await assert.rejects(
+      client.synthesizeAudio({ text: 'Test phrase', language: 'yo', voice: 'voice-yo' }),
+      /422.*Field required/i,
+    );
+  });
+
+  await assert.rejects(
+    client.synthesizeAudio({ messageId: 'great-job', language: 'en' }),
+    /VOICE_SERVICE_NOT_CONFIGURED.*Configure the backend key/i,
+  );
+});
+
+test('voice audio client rejects an empty successful response', async () => {
+  const client = createVoiceClient({
+    endpoint: '/api/coach/audio',
+    fetchImpl: async () => new Response(new Uint8Array(), {
+      status: 200,
+      headers: { 'Content-Type': 'audio/mpeg' },
+    }),
+  });
+
+  await assert.rejects(
+    client.synthesizeAudio({ messageId: 'great-job', language: 'en' }),
+    /empty audio/i,
   );
 });

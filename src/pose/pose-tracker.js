@@ -1,10 +1,29 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { drawPose } from './draw-pose.js';
 
-const WASM_BASE_PATH =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/wasm';
-const MODEL_ASSET_PATH =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const WASM_BASE_PATH = '/mediapipe/wasm';
+const MODEL_ASSET_PATH = '/models/pose_landmarker_lite.task';
+
+async function initializeLandmarker(fileset, delegateOrder = ['GPU', 'CPU']) {
+  let lastError;
+
+  for (const delegate of delegateOrder) {
+    try {
+      return await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: MODEL_ASSET_PATH, delegate },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+      });
+    } catch (error) {
+      lastError = error;
+      if (delegate === 'CPU') {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error('Unable to initialize MediaPipe pose tracking');
+}
 
 function asError(error, prefix) {
   if (error instanceof Error) {
@@ -88,14 +107,18 @@ export function createPoseTracker({ onPose, onError } = {}) {
           const result = landmarker.detectForVideo(videoElement, timestamp);
           lastVideoTime = videoElement.currentTime;
           const landmarks = result.landmarks?.[0] ?? [];
+          const worldLandmarks = result.worldLandmarks?.[0] ?? [];
 
-          drawPose(canvasElement, landmarks, videoElement);
-          onPose?.(landmarks, timestamp);
+          const poseStatus = onPose?.(landmarks, timestamp, worldLandmarks);
+          drawPose(canvasElement, landmarks, videoElement, poseStatus);
         }
-
-        scheduleFrame();
       } catch (error) {
         fail(error, 'Unable to process a camera frame');
+        return;
+      }
+
+      if (state === 'running') {
+        scheduleFrame();
       }
     });
   }
@@ -129,14 +152,7 @@ export function createPoseTracker({ onPose, onError } = {}) {
           throw new Error('Pose tracker stopped during initialization.');
         }
 
-        const initializedLandmarker = await PoseLandmarker.createFromOptions(
-          fileset,
-          {
-            baseOptions: { modelAssetPath: MODEL_ASSET_PATH },
-            runningMode: 'VIDEO',
-            numPoses: 1,
-          },
-        );
+        const initializedLandmarker = await initializeLandmarker(fileset);
 
         if (state === 'stopped') {
           initializedLandmarker.close();

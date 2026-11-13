@@ -21,6 +21,9 @@ claimed until tested with physical camera sessions.
 
 - Keep and strengthen the existing three analyzer modules.
 - The first Start press is the user's explicit camera-consent action.
+- Apply camera-size framing to the exercise's primary body axis: vertical body
+  height for upright exercises and horizontal body length for planks, using the
+  same conservative numeric bounds.
 - After camera and MediaPipe startup, remain in a positioning state without
   counting repetitions or valid plank time until the exercise-specific pose is
   reliably ready. Automatically proceed through the existing countdown once
@@ -136,9 +139,10 @@ validated universal biomechanical standards:
   the incomplete cycle and require a fresh starting pose;
 - framing boundary margin: 0.02 of frame width/height; classify required
   points outside this safe region as partial framing;
-- visible-body height: less than 0.35 of frame height is too far, and greater
-  than 0.90 is too close; values within the range may proceed to the remaining
-  checks;
+- visible-body span along the exercise's primary axis: less than 0.35 of the
+  corresponding frame dimension is too far, and greater than 0.90 is too
+  close; use vertical height for upright exercises and horizontal length for
+  planks; values within the range may proceed to the remaining checks;
 - front-view candidate: both shoulder and hip widths at least 0.35 of
   shoulder-to-hip torso length; side-view candidate: both widths at most 0.25
   of torso length; values between these thresholds are orientation-ambiguous;

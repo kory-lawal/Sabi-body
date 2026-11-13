@@ -1,13 +1,16 @@
 const FULL_BODY_LANDMARK_INDICES = [0, 11, 12, 23, 24, 25, 26, 27, 28];
 
+function isPoint(point) {
+  return (
+    point !== null &&
+    typeof point === 'object' &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y)
+  );
+}
+
 export function angleAt(a, b, c) {
-  if (![a, b, c].every(
-    (point) =>
-      point !== null &&
-      typeof point === 'object' &&
-      Number.isFinite(point.x) &&
-      Number.isFinite(point.y),
-  )) {
+  if (![a, b, c].every(isPoint)) {
     return null;
   }
 
@@ -35,16 +38,13 @@ export function getLandmarkConfidence(landmark) {
 
   const scores = [landmark.visibility, landmark.presence].filter(
     Number.isFinite,
-);
+  );
   return scores.length ? Math.min(...scores) : null;
 }
 
 export function isVisible(landmark, threshold = 0.6) {
   if (
-    landmark === null ||
-    typeof landmark !== 'object' ||
-    !Number.isFinite(landmark.x) ||
-    !Number.isFinite(landmark.y) ||
+    !isPoint(landmark) ||
     landmark.x < 0 ||
     landmark.x > 1 ||
     landmark.y < 0 ||
@@ -55,6 +55,13 @@ export function isVisible(landmark, threshold = 0.6) {
 
   const confidence = getLandmarkConfidence(landmark);
   return confidence !== null && confidence >= threshold;
+}
+
+export function distance(a, b) {
+  if (![a, b].every(isPoint)) {
+    return null;
+  }
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 export function hasFullBodyVisible(landmarks) {

@@ -1,7 +1,7 @@
-import { PoseLandmarker } from '@mediapipe/tasks-vision';
+import { DrawingUtils, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { isVisible } from '../exercises/geometry.js';
 
-export function drawPose(canvas, landmarks, videoElement) {
+export function drawPose(canvas, landmarks, videoElement, poseStatus = {}) {
   if (!canvas || !videoElement) {
     return;
   }
@@ -30,47 +30,42 @@ export function drawPose(canvas, landmarks, videoElement) {
     return;
   }
 
-  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-  context.clearRect(0, 0, width, height);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, backingWidth, backingHeight);
 
   const visible = landmarks.map((landmark) => isVisible(landmark));
-  const connections = PoseLandmarker.POSE_CONNECTIONS;
+  const poseConnections = Array.isArray(PoseLandmarker.POSE_CONNECTIONS)
+    ? PoseLandmarker.POSE_CONNECTIONS
+    : [];
+  const connections = poseConnections.filter(
+    ({ start, end }) => visible[start] && visible[end],
+  );
   const lineWidth = Math.max(2, Math.min(width, height) * 0.004);
   const pointRadius = Math.max(3, Math.min(width, height) * 0.008);
+  const poseColor = poseStatus.formValid
+    ? '#61d095'
+    : poseStatus.readinessReady
+      ? '#e77b67'
+      : '#f0b44b';
 
-  context.save();
-  context.translate(width, 0);
-  context.scale(-1, 1);
-  context.strokeStyle = '#f0b44b';
-  context.lineWidth = lineWidth;
-  context.beginPath();
+  try {
+    const drawingUtils = new DrawingUtils(context);
+    drawingUtils.drawConnectors(landmarks, connections, {
+      color: poseColor,
+      lineWidth,
+    });
 
-  for (const { start, end } of connections) {
-    if (visible[start] && visible[end]) {
-      context.moveTo(landmarks[start].x * width, landmarks[start].y * height);
-      context.lineTo(landmarks[end].x * width, landmarks[end].y * height);
+    for (let index = 0; index < landmarks.length; index += 1) {
+      if (visible[index]) {
+        drawingUtils.drawLandmarks([landmarks[index]], {
+          color: poseColor,
+          fillColor: poseColor,
+          radius: pointRadius,
+        });
+      }
     }
+  } catch {
+    // Rendering is optional for tracking analysis. Keep the pose callback alive
+    // when a browser or test environment does not expose the full canvas API.
   }
-
-  context.stroke();
-  context.fillStyle = '#f0b44b';
-
-  for (let index = 0; index < landmarks.length; index += 1) {
-    if (!visible[index]) {
-      continue;
-    }
-
-    const landmark = landmarks[index];
-    context.beginPath();
-    context.arc(
-      landmark.x * width,
-      landmark.y * height,
-      pointRadius,
-      0,
-      Math.PI * 2,
-    );
-    context.fill();
-  }
-
-  context.restore();
 }
