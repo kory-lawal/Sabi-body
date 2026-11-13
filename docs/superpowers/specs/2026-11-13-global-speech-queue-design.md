@@ -34,6 +34,11 @@ are coalesced while queued or active and suppressed for a short per-event
 cooldown of 4.5 seconds after completion. Different repetition counts remain
 distinct events.
 
+The existing global cooldown between different feedback events is removed so
+distinct eligible announcements are queued instead of silently dropped.
+Eligibility rules that intentionally disable a message for the selected coach
+personality remain unchanged; duplicate suppression is owned by the queue.
+
 Priority levels are: workout completion and explicit audio diagnostics (100),
 essential form corrections (80), workout controls and countdowns (70),
 repetition counts (50), and routine encouragement and milestones (30).
