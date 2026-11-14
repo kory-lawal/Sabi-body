@@ -577,6 +577,20 @@ export function hasCoachingMessage(messageId) {
   return Object.hasOwn(MESSAGE_CATALOG, messageId);
 }
 
+export function interpolateCoachingTemplate(template, parameters = {}) {
+  return template.replace(/\{([a-z]+)\}/g, (placeholder, key) => {
+    if (
+      !INTERPOLATION_KEYS.has(key)
+      || !Object.hasOwn(parameters, key)
+      || typeof parameters[key] !== 'number'
+      || !Number.isFinite(parameters[key])
+    ) {
+      return placeholder;
+    }
+    return String(parameters[key]);
+  });
+}
+
 export function translateCoachingMessage(messageId, languageCode, parameters = {}) {
   if (!hasCoachingMessage(messageId)) {
     return {
@@ -589,12 +603,7 @@ export function translateCoachingMessage(messageId, languageCode, parameters = {
   const translations = MESSAGE_CATALOG[messageId];
   const hasLocalizedMessage = Object.hasOwn(translations, languageCode);
   const localizedText = hasLocalizedMessage ? translations[languageCode] : translations.en;
-  const text = localizedText.replace(/\{([a-z]+)\}/g, (placeholder, key) => {
-    if (!INTERPOLATION_KEYS.has(key) || !Object.hasOwn(parameters, key)) {
-      return placeholder;
-    }
-    return String(parameters[key]);
-  });
+  const text = interpolateCoachingTemplate(localizedText, parameters);
 
   return {
     text,

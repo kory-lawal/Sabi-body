@@ -7,7 +7,10 @@ import {
   LANGUAGES,
   translateMessage,
 } from '../src/feedback/messages.js';
-import { hasCoachingMessage } from '../api/src/shared/coaching-messages.js';
+import {
+  hasCoachingMessage,
+  interpolateCoachingTemplate,
+} from '../api/src/shared/coaching-messages.js';
 import { createSpeechCoach } from '../src/feedback/speech.js';
 import { createVoiceClient } from '../src/services/voice-client.js';
 
@@ -73,6 +76,24 @@ test('coaching templates interpolate approved values and leave unapproved placeh
   assert.match(result.text, /10/);
   assert.doesNotMatch(result.text, /unapproved-value/);
   assert.equal(result.isFallback, false);
+});
+
+test('template interpolation replaces only approved finite numeric parameters', () => {
+  assert.equal(
+    interpolateCoachingTemplate('Completed {count}; unsupported {unexpected}.', {
+      count: 4,
+      unexpected: 99,
+    }),
+    'Completed 4; unsupported {unexpected}.',
+  );
+  assert.equal(
+    interpolateCoachingTemplate('{count}/{remaining}/{target}', {
+      count: '4',
+      remaining: Infinity,
+      target: NaN,
+    }),
+    '{count}/{remaining}/{target}',
+  );
 });
 
 test('LANGUAGES includes every supported language code', () => {
