@@ -475,6 +475,7 @@ export function createWorkoutController({
     startPromise = null;
     generation += 1;
     invalidateCurrentPhase();
+    workoutSpeechQueue.clearPending();
 
     try {
       tracker?.stop();

@@ -1621,12 +1621,13 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
   assert.equal(synthesisCalls, 0);
 });
 
-test('shared speech queue serializes coaching and prioritizes completion', async () => {
+test('workout completion clears stale pending coaching without interrupting active speech', async () => {
   const queue = createSpeechQueue({ delay: async () => {} });
   const speechEvents = [];
   const finishers = [];
   let activeAdapters = 0;
   let maximumActiveAdapters = 0;
+  let cancellationCount = 0;
   let onPose;
   let completedCount = 0;
   const controller = createWorkoutController({
@@ -1646,7 +1647,7 @@ test('shared speech queue serializes coaching and prioritizes completion', async
           });
         });
       },
-      cancel() {},
+      cancel() { cancellationCount += 1; },
     },
     startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
     stopCamera() {},
@@ -1677,6 +1678,7 @@ test('shared speech queue serializes coaching and prioritizes completion', async
   assert.deepEqual(speechEvents.map(({ messageId }) => messageId), ['welcome']);
   assert.equal(activeAdapters, 1);
   assert.equal(maximumActiveAdapters, 1);
+  assert.equal(cancellationCount, 0);
 
   finishers.shift()();
   await new Promise((resolve) => setImmediate(resolve));
@@ -1689,6 +1691,10 @@ test('shared speech queue serializes coaching and prioritizes completion', async
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.equal(maximumActiveAdapters, 1);
+  assert.deepEqual(
+    speechEvents.map(({ messageId }) => messageId),
+    ['welcome', 'exercise-completed'],
+  );
 });
 
 test('reset and end clear pending coaching without cancelling the active announcement', async () => {
