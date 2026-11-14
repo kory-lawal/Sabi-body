@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createPlankAnalyzer } from '../src/exercises/plank.js';
-import { translateMessage } from '../src/feedback/messages.js';
+import { EXERCISE_INSTRUCTION_IDS, translateMessage } from '../src/feedback/messages.js';
+import { createSpeechQueue } from '../src/feedback/speech-queue.js';
 import { createWorkoutController, mountApp, voiceOptions } from '../src/ui/app.js';
 import { EXERCISES } from '../src/ui/exercise-content.js';
 import viteConfig from '../vite.config.js';
@@ -234,6 +235,7 @@ function createHarness({
       return tracker;
     },
     createAnalyzers,
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
     ...(diagnosticsEnabled === undefined ? {} : { diagnosticsEnabled }),
     translateMessage: () => ({ text: 'Ready', isFallback: false }),
     speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
@@ -252,6 +254,12 @@ function createHarness({
       return cameraStops;
     },
   };
+}
+
+async function flushSpeechQueue() {
+  for (let turn = 0; turn < 12; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 test('controller publishes landmark diagnostics when enabled', async () => {
@@ -287,6 +295,656 @@ test('controller does not publish landmark diagnostics by default', async () => 
   );
 
   assert.deepEqual(harness.controller.getState().diagnosticLandmarks, []);
+});
+
+test('goal presets and custom input stay synchronized with the selected workout target', () => {
+  const listeners = new Map();
+  const goalLabel = { textContent: '' };
+  const progressValue = { textContent: '' };
+  const progressMeta = { textContent: '' };
+  const customInput = {
+    value: '10',
+    validity: { valid: true },
+    matches(selector) {
+      return selector === '[data-action="goal-custom"]';
+    },
+  };
+  const presetButtons = [5, 10, 15, 20, 25, 30, 50].map((target) => {
+    const button = {
+      dataset: { action: 'set-goal', target: String(target) },
+      selected: false,
+      ariaPressed: 'false',
+      classList: {
+        toggle(name, enabled) {
+          if (name === 'is-selected') {
+            button.selected = enabled;
+          }
+        },
+      },
+      setAttribute(name, value) {
+        if (name === 'aria-pressed') {
+          button.ariaPressed = value;
+        }
+      },
+    };
+    return button;
+  });
+  const root = {
+    innerHTML: '',
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      if (selector === '[data-goal-target]') {
+        return goalLabel;
+      }
+      if (selector === '[data-progress]') {
+        return progressValue;
+      }
+      if (selector === '[data-progress-meta]') {
+        return progressMeta;
+      }
+      if (selector === '[data-action="goal-custom"]') {
+        return customInput;
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-action="set-goal"]' || selector === '[data-action]'
+        ? presetButtons
+        : [];
+    },
+  };
+  const click = (action, dataset = {}) => listeners.get('click')({
+    target: {
+      closest: () => ({ dataset: { action, ...dataset } }),
+    },
+  });
+  const controller = mountApp(root);
+
+  click('choose-exercise', { exercise: 'squats' });
+  assert.equal(controller.getState().target, 10);
+
+  for (const target of [5, 10, 15, 20, 25, 30, 50]) {
+    click('set-goal', { target: String(target) });
+    assert.equal(controller.getState().target, target);
+    assert.equal(goalLabel.textContent, `${target} reps`);
+    assert.equal(progressValue.textContent, `0 / ${target} reps`);
+    assert.equal(progressMeta.textContent, `0/${target} • ${target} remaining • 0%`);
+    assert.equal(customInput.value, String(target));
+    assert.deepEqual(
+      presetButtons.filter((button) => button.selected).map((button) => Number(button.dataset.target)),
+      [target],
+    );
+    assert.equal(presetButtons.find((button) => Number(button.dataset.target) === target).ariaPressed, 'true');
+  }
+
+  customInput.value = '17';
+  listeners.get('input')({ target: customInput });
+  assert.equal(controller.getState().target, 17);
+  assert.equal(goalLabel.textContent, '17 reps');
+  assert.equal(progressValue.textContent, '0 / 17 reps');
+  assert.equal(progressMeta.textContent, '0/17 • 17 remaining • 0%');
+  assert.equal(customInput.value, '17');
+  assert.deepEqual(presetButtons.filter((button) => button.selected), []);
+
+  click('set-goal', { target: '15' });
+  assert.equal(controller.getState().target, 15);
+  assert.equal(goalLabel.textContent, '15 reps');
+  assert.equal(progressValue.textContent, '0 / 15 reps');
+  assert.equal(progressMeta.textContent, '0/15 • 15 remaining • 0%');
+  assert.equal(customInput.value, '15');
+  assert.deepEqual(
+    presetButtons.filter((button) => button.selected).map((button) => Number(button.dataset.target)),
+    [15],
+  );
+});
+
+test('selected goal becomes the actual target for workout completion', async () => {
+  let count = 0;
+  const harness = createHarness({
+    autoReadiness: false,
+    createAnalyzers: () => ({
+      squats: {
+        reset() {
+          count = 0;
+        },
+        invalidatePhase() {},
+        update() {
+          count += 1;
+          return { count, formValid: false, state: 'standing' };
+        },
+      },
+    }),
+  });
+
+  harness.controller.setGoal(3);
+  assert.equal(harness.controller.getState().progressTarget, 3);
+  await harness.controller.start();
+  const onPose = harness.trackers[0].callbacks.onPose;
+  for (let frame = 0; frame < 3; frame += 1) {
+    onPose(createReadyLandmarks('squats'), frame * 33);
+  }
+
+  const state = harness.controller.getState();
+  assert.equal(state.workoutStatus, 'completed');
+  assert.equal(state.completedWorkouts[0].target, 3);
+});
+
+test('a selected 30-rep goal stays visible and drives the active workout target', async () => {
+  const listeners = new Map();
+  const progressValue = { textContent: '' };
+  const progressMeta = { textContent: '' };
+  const goalTarget = { textContent: '' };
+  const customInput = { value: '10' };
+  const video = { srcObject: null };
+  const canvas = {};
+  const root = {
+    innerHTML: '',
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      return {
+        video,
+        canvas,
+        '[data-progress]': progressValue,
+        '[data-progress-meta]': progressMeta,
+        '[data-goal-target]': goalTarget,
+        '[data-action="goal-custom"]': customInput,
+      }[selector] ?? null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const click = (action, dataset = {}) => listeners.get('click')({
+    target: {
+      closest: () => ({ dataset: { action, ...dataset } }),
+    },
+  });
+  let count = 0;
+  let onPose;
+  const controller = mountApp(root, {
+    controllerOptions: {
+      startCamera: async (videoElement) => {
+        const track = { stop() {} };
+        const stream = {
+          getTracks: () => [track],
+          getVideoTracks: () => [track],
+        };
+        videoElement.srcObject = stream;
+        return stream;
+      },
+      stopCamera(_stream, videoElement) {
+        videoElement.srcObject = null;
+      },
+      createPoseTracker(callbacks) {
+        return {
+          async start() {
+            onPose = callbacks.onPose;
+          },
+          pause() {},
+          resume() {},
+          stop() {},
+        };
+      },
+      createAnalyzers: () => ({
+        squats: {
+          reset() {
+            count = 0;
+          },
+          invalidatePhase() {},
+          update() {
+            count += 1;
+            return { count, state: 'standing' };
+          },
+        },
+      }),
+    },
+  });
+
+  click('choose-exercise', { exercise: 'squats' });
+  click('set-goal', { target: '30' });
+  assert.equal(controller.getState().target, 30);
+  assert.equal(goalTarget.textContent, '30 reps');
+
+  click('start');
+  await controller.start();
+  assert.equal(progressValue.textContent, '0 / 30 reps');
+  assert.match(progressMeta.textContent, /^0\/30 • 30 remaining • 0%$/);
+
+  onPose(createReadyLandmarks('squats'), 33);
+  assert.equal(progressValue.textContent, '1 / 30 reps');
+  assert.match(progressMeta.textContent, /^1\/30 • 29 remaining • 3%$/);
+
+  for (let frame = 2; frame <= 30; frame += 1) {
+    onPose(createReadyLandmarks('squats'), frame * 33);
+  }
+  const state = controller.getState();
+  assert.equal(state.workoutStatus, 'completed');
+  assert.equal(state.completedWorkouts[0].target, 30);
+  assert.equal(state.completedWorkouts[0].achieved, 30);
+});
+
+test('mobile settings menu opens, closes on outside click and Escape, and applies selections', () => {
+  const rootListeners = new Map();
+  const documentListeners = new Map();
+  const settingsToggle = {
+    expanded: 'false',
+    setAttribute(name, value) {
+      if (name === 'aria-expanded') {
+        this.expanded = value;
+      }
+    },
+  };
+  const settingsPanel = { dataset: { open: 'false' } };
+  const inside = {};
+  const settingsRoot = { contains: (target) => target === inside };
+  const document = {
+    body: { classList: { toggle() {} } },
+    addEventListener(name, callback) {
+      documentListeners.set(name, callback);
+    },
+  };
+  const root = {
+    innerHTML: '',
+    ownerDocument: document,
+    addEventListener(name, callback) {
+      rootListeners.set(name, callback);
+    },
+    querySelector(selector) {
+      return {
+        '[data-action="toggle-mobile-settings"]': settingsToggle,
+        '[data-mobile-settings]': settingsPanel,
+        '[data-mobile-settings-root]': settingsRoot,
+      }[selector] ?? null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const click = (action) => rootListeners.get('click')({
+    target: { closest: () => ({ dataset: { action } }) },
+  });
+  const controller = mountApp(root);
+
+  assert.match(root.innerHTML, /data-action="toggle-mobile-settings"/);
+  assert.match(root.innerHTML, /aria-expanded="false"/);
+  assert.equal(settingsPanel.dataset.open, 'false');
+
+  click('toggle-mobile-settings');
+  assert.equal(settingsPanel.dataset.open, 'true');
+  assert.equal(settingsToggle.expanded, 'true');
+
+  rootListeners.get('change')({
+    target: {
+      value: 'yo',
+      matches: (selector) => selector === '[data-action="language"]',
+    },
+  });
+  assert.equal(controller.getState().language, 'yo');
+  assert.equal(settingsPanel.dataset.open, 'false');
+  assert.equal(settingsToggle.expanded, 'false');
+
+  click('toggle-mobile-settings');
+  documentListeners.get('pointerdown')({ target: inside });
+  assert.equal(settingsPanel.dataset.open, 'true');
+  documentListeners.get('pointerdown')({ target: {} });
+  assert.equal(settingsPanel.dataset.open, 'false');
+
+  click('toggle-mobile-settings');
+  documentListeners.get('keydown')({ key: 'Escape' });
+  assert.equal(settingsPanel.dataset.open, 'false');
+  assert.equal(settingsToggle.expanded, 'false');
+});
+
+test('active workout keeps voice controls available through its mobile disclosure', () => {
+  const listeners = new Map();
+  const voiceToggle = {
+    expanded: 'false',
+    setAttribute(name, value) {
+      if (name === 'aria-expanded') {
+        this.expanded = value;
+      }
+    },
+  };
+  const voicePanel = { dataset: { open: 'false' } };
+  const root = {
+    innerHTML: '',
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      return {
+        '[data-action="toggle-mobile-voice-settings"]': voiceToggle,
+        '[data-mobile-voice-settings]': voicePanel,
+      }[selector] ?? null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const click = (action, dataset = {}) => listeners.get('click')({
+    target: { closest: () => ({ dataset: { action, ...dataset } }) },
+  });
+
+  mountApp(root);
+  click('choose-exercise', { exercise: 'squats' });
+
+  for (const action of ['voice', 'voice-volume', 'voice-id', 'count-each-rep']) {
+    assert.match(root.innerHTML, new RegExp(`data-action="${action}"`));
+  }
+  assert.match(root.innerHTML, /data-action="toggle-mobile-voice-settings"/);
+  assert.match(root.innerHTML, /aria-controls="mobile-voice-settings"/);
+  assert.match(root.innerHTML, /data-fullscreen-status/);
+
+  click('toggle-mobile-voice-settings');
+  assert.equal(voicePanel.dataset.open, 'true');
+  assert.equal(voiceToggle.expanded, 'true');
+});
+
+test('mobile Start requests fullscreen without waiting for it before starting', async () => {
+  const listeners = new Map();
+  const events = [];
+  const bodyClasses = new Set();
+  const pageClasses = new Set();
+  const status = { hidden: true, textContent: '' };
+  const video = { srcObject: null };
+  const canvas = {};
+  const page = {
+    classList: {
+      toggle(name, enabled) {
+        enabled ? pageClasses.add(name) : pageClasses.delete(name);
+      },
+    },
+    querySelector(selector) {
+      return selector === '[data-fullscreen-status]' ? status : null;
+    },
+  };
+  const document = {
+    fullscreenElement: null,
+    body: {
+      classList: {
+        toggle(name, enabled) {
+          enabled ? bodyClasses.add(name) : bodyClasses.delete(name);
+        },
+      },
+    },
+    defaultView: { matchMedia: () => ({ matches: true }) },
+    addEventListener() {},
+    exitFullscreen() {
+      events.push('exit-fullscreen');
+      this.fullscreenElement = null;
+      return Promise.resolve();
+    },
+  };
+  let resolveFullscreen;
+  page.requestFullscreen = () => {
+    events.push('fullscreen');
+    return new Promise((resolve) => {
+      resolveFullscreen = resolve;
+    });
+  };
+  const root = {
+    innerHTML: '',
+    ownerDocument: document,
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      if (selector === '.workout-page') {
+        return root.innerHTML.includes('class="workout-page"') ? page : null;
+      }
+      if (selector === '[data-fullscreen-status]') {
+        return root.innerHTML.includes('data-fullscreen-status') ? status : null;
+      }
+      if (selector === 'video') {
+        return root.innerHTML.includes('<video') ? video : null;
+      }
+      if (selector === 'canvas') {
+        return root.innerHTML.includes('<canvas') ? canvas : null;
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const click = (action, dataset = {}) => listeners.get('click')({
+    target: { closest: () => ({ dataset: { action, ...dataset } }) },
+  });
+  const controller = mountApp(root, {
+    controllerOptions: {
+      startCamera: async (cameraVideo) => {
+        events.push('camera');
+        const track = { stop() {} };
+        const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+        cameraVideo.srcObject = stream;
+        return stream;
+      },
+      stopCamera(_stream, cameraVideo) {
+        cameraVideo.srcObject = null;
+      },
+      createPoseTracker: () => ({
+        async start() {},
+        pause() {},
+        resume() {},
+        stop() {},
+      }),
+    },
+  });
+
+  click('choose-exercise', { exercise: 'squats' });
+  click('start');
+
+  assert.deepEqual(events, ['fullscreen', 'camera']);
+  assert.equal(controller.getState().workoutStatus, 'loading');
+  assert.ok(bodyClasses.has('workout-active'));
+  assert.ok(pageClasses.has('is-active'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.getState().workoutStatus, 'running');
+
+  controller.reset();
+  assert.ok(bodyClasses.has('workout-active'));
+  controller.pause();
+  assert.ok(bodyClasses.has('workout-active'));
+  await controller.resume();
+  assert.ok(bodyClasses.has('workout-active'));
+
+  document.fullscreenElement = page;
+  resolveFullscreen();
+  await new Promise((resolve) => setImmediate(resolve));
+  await controller.end();
+  assert.deepEqual(events, ['fullscreen', 'camera', 'exit-fullscreen']);
+  assert.equal(bodyClasses.has('workout-active'), false);
+});
+
+test('fullscreen rejection and unsupported fullscreen keep mobile camera startup available', async () => {
+  for (const requestFullscreen of [
+    undefined,
+    () => Promise.reject(new Error('fullscreen denied')),
+  ]) {
+    const listeners = new Map();
+    const status = { hidden: true, textContent: '' };
+    const video = { srcObject: null };
+    const canvas = {};
+    let cameraStarted = false;
+    const page = {
+      querySelector: (selector) => selector === '[data-fullscreen-status]' ? status : null,
+      ...(requestFullscreen ? { requestFullscreen } : {}),
+    };
+    const root = {
+      innerHTML: '',
+      ownerDocument: {
+        body: { classList: { toggle() {} } },
+        defaultView: { matchMedia: () => ({ matches: true }) },
+        addEventListener() {},
+      },
+      addEventListener(name, callback) {
+        listeners.set(name, callback);
+      },
+      querySelector(selector) {
+        if (selector === '.workout-page') {
+          return root.innerHTML.includes('class="workout-page"') ? page : null;
+        }
+        if (selector === '[data-fullscreen-status]') {
+          return root.innerHTML.includes('data-fullscreen-status') ? status : null;
+        }
+        if (selector === 'video') {
+          return root.innerHTML.includes('<video') ? video : null;
+        }
+        return selector === 'canvas' && root.innerHTML.includes('<canvas') ? canvas : null;
+      },
+      querySelectorAll() {
+        return [];
+      },
+    };
+    const click = (action, dataset = {}) => listeners.get('click')({
+      target: { closest: () => ({ dataset: { action, ...dataset } }) },
+    });
+    const controller = mountApp(root, {
+      controllerOptions: {
+        startCamera: async (cameraVideo) => {
+          cameraStarted = true;
+          const track = { stop() {} };
+          const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+          cameraVideo.srcObject = stream;
+          return stream;
+        },
+        stopCamera(_stream, cameraVideo) {
+          cameraVideo.srcObject = null;
+        },
+        createPoseTracker: () => ({
+          async start() {},
+          stop() {},
+        }),
+      },
+    });
+
+    click('choose-exercise', { exercise: 'squats' });
+    click('start');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(cameraStarted, true);
+    assert.equal(controller.getState().workoutStatus, 'running');
+    assert.equal(status.hidden, false);
+    assert.match(status.textContent, /Fullscreen unavailable/);
+    await controller.end();
+  }
+});
+
+test('workout completion exits mobile fullscreen and releases scroll lock', async () => {
+  const listeners = new Map();
+  const bodyClasses = new Set();
+  const pageClasses = new Set();
+  const video = { srcObject: null };
+  const canvas = {};
+  const page = {
+    classList: {
+      toggle(name, enabled) {
+        enabled ? pageClasses.add(name) : pageClasses.delete(name);
+      },
+    },
+    querySelector() {
+      return null;
+    },
+    requestFullscreen() {
+      document.fullscreenElement = page;
+      return Promise.resolve();
+    },
+  };
+  const document = {
+    fullscreenElement: null,
+    body: {
+      classList: {
+        toggle(name, enabled) {
+          enabled ? bodyClasses.add(name) : bodyClasses.delete(name);
+        },
+      },
+    },
+    defaultView: { matchMedia: () => ({ matches: true }) },
+    addEventListener() {},
+    exitFullscreen() {
+      this.fullscreenElement = null;
+      return Promise.resolve();
+    },
+  };
+  const root = {
+    innerHTML: '',
+    ownerDocument: document,
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      if (selector === '.workout-page') {
+        return root.innerHTML.includes('class="workout-page"') ? page : null;
+      }
+      if (selector === 'video') {
+        return root.innerHTML.includes('<video') ? video : null;
+      }
+      if (selector === 'canvas') {
+        return root.innerHTML.includes('<canvas') ? canvas : null;
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const click = (action, dataset = {}) => listeners.get('click')({
+    target: { closest: () => ({ dataset: { action, ...dataset } }) },
+  });
+  let onPose;
+  let count = 0;
+  const controller = mountApp(root, {
+    controllerOptions: {
+      startCamera: async (cameraVideo) => {
+        const track = { stop() {} };
+        const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+        cameraVideo.srcObject = stream;
+        return stream;
+      },
+      stopCamera(_stream, cameraVideo) {
+        cameraVideo.srcObject = null;
+      },
+      createPoseTracker: (callbacks) => {
+        onPose = callbacks.onPose;
+        return {
+          async start() {},
+          stop() {},
+        };
+      },
+      createAnalyzers: () => ({
+        squats: {
+          reset() {
+            count = 0;
+          },
+          invalidatePhase() {},
+          update() {
+            count += 1;
+            return { count, state: 'standing' };
+          },
+        },
+      }),
+    },
+  });
+
+  click('choose-exercise', { exercise: 'squats' });
+  controller.setGoal(1);
+  click('start');
+  await controller.start();
+  assert.equal(document.fullscreenElement, page);
+  assert.ok(bodyClasses.has('workout-active'));
+
+  for (let frame = 0; frame < 5 && controller.getState().workoutStatus === 'running'; frame += 1) {
+    onPose(createReadyLandmarks('squats'), frame * 33);
+  }
+
+  assert.equal(controller.getState().workoutStatus, 'completed');
+  assert.equal(document.fullscreenElement, null);
+  assert.equal(bodyClasses.has('workout-active'), false);
+  assert.ok(root.innerHTML.includes('Workout Completed!'));
 });
 
 test('repeated Start actions share one camera stream and tracker loop', async () => {
@@ -651,6 +1309,7 @@ test('quiet coach speaks essential corrections but not general praise', async ()
   const controller = createWorkoutController({
     video: { srcObject: null },
     canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
     speechCoach: {
       setEnabled() {},
       speak(...args) { spoken.push(args); },
@@ -674,9 +1333,11 @@ test('quiet coach speaks essential corrections but not general praise', async ()
   emitReadyFrames(onPose, 'squats', 1000);
   onPose(createReadyLandmarks('squats'), 1100);
 
+  await flushSpeechQueue();
   assert.deepEqual(spoken.map(([messageId]) => messageId), [
     'workout-countdown',
     'adjust-alignment',
+    'instruction-squats',
   ]);
 });
 
@@ -773,12 +1434,21 @@ for (const language of ['yo', 'ig', 'ha', 'pcm']) {
 
 test('localized audio is requested once for an eligible analyzer event only', async () => {
   const calls = [];
-  const playCalls = [];
+  const queue = createSpeechQueue({ delay: async () => {} });
+  const queuedEvents = [];
   let onPose;
   const feedback = ['great-job', 'adjust-alignment', 'adjust-alignment'];
   const controller = createWorkoutController({
     video: { srcObject: null },
     canvas: {},
+    speechQueue: {
+      enqueue(item) {
+        queuedEvents.push(item);
+        return queue.enqueue(item);
+      },
+      clearPending: () => queue.clearPending(),
+      cancel: () => queue.cancel(),
+    },
     storage: { getItem() { return null; }, setItem() {} },
     audioCoach: {
       async listVoices() { return [{ id: 'yoruba-voice', languages: ['yo'] }]; },
@@ -788,7 +1458,7 @@ test('localized audio is requested once for an eligible analyzer event only', as
       },
     },
     voicePlayback: {
-      async play(audio, options) { playCalls.push(options); return true; },
+      async play() { return true; },
       setMuted() {},
       stop() {},
     },
@@ -813,16 +1483,17 @@ test('localized audio is requested once for an eligible analyzer event only', as
   emitReadyFrames(onPose, 'squats', 1000);
   onPose(createReadyLandmarks('squats'), 1100);
   onPose(createReadyLandmarks('squats'), 1200);
-  await new Promise((resolve) => setImmediate(resolve));
+  await flushSpeechQueue();
 
   assert.deepEqual(calls.map(({ text }) => text), [
     'Múra sílẹ̀. Mẹ́ta, méjì, ọ̀kan, bẹ̀rẹ̀!',
     'Ṣe atunṣe díẹ sí ìdúró ara rẹ.',
+    'Tẹ eékún rẹ kí o sì ti ìgbáròkó rẹ sẹ́yìn, lẹ́yìn náà dìde dúró.',
   ]);
   const correction = calls.find(({ text }) => text === 'Ṣe atunṣe díẹ sí ìdúró ara rẹ.');
   assert.equal(correction.language, 'yo');
   assert.equal(correction.voice, 'yoruba-voice');
-  assert.ok(playCalls.some(({ eventKey }) => /adjust-alignment/.test(eventKey)));
+  assert.ok(queuedEvents.some(({ eventKey }) => /adjust-alignment/.test(eventKey)));
 });
 
 test('optional spoken rep counts follow analyzer increments and completion takes precedence', async () => {
@@ -832,6 +1503,7 @@ test('optional spoken rep counts follow analyzer increments and completion takes
   const controller = createWorkoutController({
     video: { srcObject: null },
     canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
     audioCoach: {
       async listVoices() { return [{ id: 'yoruba-voice', languages: ['yo'] }]; },
       async synthesizeAudio(payload) {
@@ -869,14 +1541,15 @@ test('optional spoken rep counts follow analyzer increments and completion takes
   emitReadyFrames(onPose, 'squats', 1000);
   onPose(createReadyLandmarks('squats'), 1100);
   onPose(createReadyLandmarks('squats'), 1200);
-  await new Promise((resolve) => setImmediate(resolve));
+  await flushSpeechQueue();
 
   assert.deepEqual(calls.map(({ text }) => text), [
     'Ẹ káàbọ̀. Ẹ jẹ́ ká máa rìn ní ìyára tó bá yín mu.',
     'Múra sílẹ̀. Mẹ́ta, méjì, ọ̀kan, bẹ̀rẹ̀!',
+    'Tẹ eékún rẹ kí o sì ti ìgbáròkó rẹ sẹ́yìn, lẹ́yìn náà dìde dúró.',
     '1. Tẹsiwaju ni iyara ti o ba ọ mu.',
-    '2. Tẹsiwaju ni iyara ti o ba ọ mu.',
     'O ti pari adaṣe. O ṣeun!',
+    '2. Tẹsiwaju ni iyara ti o ba ọ mu.',
   ]);
 });
 
@@ -1158,6 +1831,7 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
   const controller = createWorkoutController({
     video: {},
     canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
     audioCoach: {
       async listVoices() { return []; },
       async synthesizeAudio() {
@@ -1187,14 +1861,445 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
   await new Promise((resolve) => setImmediate(resolve));
   await controller.start();
   emitReadyFrames(onPose, 'squats');
-  await new Promise((resolve) => setImmediate(resolve));
+  await flushSpeechQueue();
 
   assert.deepEqual(speechEvents, [
     'welcome',
-    'workout-countdown',
     'return-to-start',
+    'workout-countdown',
+    'instruction-squats',
   ]);
   assert.equal(synthesisCalls, 0);
+});
+
+test('shared speech queue serializes coaching and prioritizes completion', async () => {
+  const queue = createSpeechQueue({ delay: async () => {} });
+  const speechEvents = [];
+  const finishers = [];
+  let activeAdapters = 0;
+  let maximumActiveAdapters = 0;
+  let onPose;
+  let completedCount = 0;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: queue,
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text, language) {
+        activeAdapters += 1;
+        maximumActiveAdapters = Math.max(maximumActiveAdapters, activeAdapters);
+        speechEvents.push({ messageId, text, language });
+        return new Promise((resolve) => {
+          finishers.push(() => {
+            activeAdapters -= 1;
+            resolve(true);
+          });
+        });
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: { reset() {}, update() { return { count: completedCount, state: 'standing' }; } },
+      'jumping-jacks': { reset() {}, update() { return { count: 0, state: 'closed' }; } },
+      plank: { reset() {}, update() { return { elapsedMs: 0, state: 'waiting' }; } },
+      'push-ups': { reset() {}, update() { return { count: 0, state: 'top' }; } },
+      'sit-ups': { reset() {}, update() { return { count: 0, state: 'lowered' }; } },
+      lunges: { reset() {}, update() { return { count: 0, state: 'standing' }; } },
+    }),
+  });
+  controller.setGoal(1);
+  controller.setVoiceEnabled(true);
+  await controller.start();
+  emitReadyFrames(onPose, 'squats');
+  completedCount = 1;
+  onPose(createReadyLandmarks('squats'), 200);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(controller.getState().workoutStatus, 'completed');
+  assert.deepEqual(speechEvents.map(({ messageId }) => messageId), ['welcome']);
+  assert.equal(activeAdapters, 1);
+  assert.equal(maximumActiveAdapters, 1);
+
+  finishers.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(speechEvents[1]?.messageId, 'exercise-completed');
+  assert.equal(activeAdapters, 1);
+  assert.equal(maximumActiveAdapters, 1);
+
+  while (finishers.length) {
+    finishers.shift()();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(maximumActiveAdapters, 1);
+});
+
+test('reset and end clear pending coaching without cancelling the active announcement', async () => {
+  for (const action of ['reset', 'end']) {
+    const queue = createSpeechQueue({ delay: async () => {} });
+    const speechEvents = [];
+    let releaseActive;
+    let cancellationCount = 0;
+    let onPose;
+    const controller = createWorkoutController({
+      video: {},
+      canvas: {},
+      speechQueue: queue,
+      speechCoach: {
+        setEnabled() {},
+        speak(messageId) {
+          speechEvents.push(messageId);
+          if (messageId === 'welcome') {
+            return new Promise((resolve) => { releaseActive = resolve; });
+          }
+          return true;
+        },
+        cancel() { cancellationCount += 1; },
+      },
+      startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+      stopCamera() {},
+      createPoseTracker: (callbacks) => ({
+        async start() { onPose = callbacks.onPose; },
+        stop() {},
+        pause() {},
+        resume() {},
+      }),
+      createAnalyzers: () => ({
+        squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+        'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+        plank: { reset() {}, update: () => ({ elapsedMs: 0, state: 'waiting' }) },
+        'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+        'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+        lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+      }),
+    });
+    controller.setVoiceEnabled(true);
+    await controller.start();
+    emitReadyFrames(onPose, 'squats');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(speechEvents, ['welcome']);
+
+    if (action === 'reset') {
+      controller.reset();
+    } else {
+      await controller.end();
+    }
+    assert.equal(cancellationCount, 0);
+    releaseActive(true);
+    await flushSpeechQueue();
+    assert.deepEqual(speechEvents, ['welcome']);
+  }
+});
+
+test('rep event keys preserve distinct counts and the queue suppresses duplicate feedback', async () => {
+  const queue = createSpeechQueue({ delay: async () => {} });
+  const enqueueResults = [];
+  const speechEvents = [];
+  let releaseWelcome;
+  let onPose;
+  let count = 0;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: {
+      enqueue(item) {
+        const accepted = queue.enqueue(item);
+        enqueueResults.push({ eventKey: item.eventKey, accepted });
+        return accepted;
+      },
+      clearPending: () => queue.clearPending(),
+      cancel: () => queue.cancel(),
+    },
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text, language) {
+        speechEvents.push({ messageId, text, language });
+        if (messageId === 'welcome') {
+          return new Promise((resolve) => { releaseWelcome = resolve; });
+        }
+        return true;
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: { reset() {}, update() { return { count, state: 'standing', feedbackId: 'adjust-alignment' }; } },
+      'jumping-jacks': { reset() {}, update() { return { count: 0, state: 'closed' }; } },
+      plank: { reset() {}, update() { return { elapsedMs: 0, state: 'waiting' }; } },
+      'push-ups': { reset() {}, update() { return { count: 0, state: 'top' }; } },
+      'sit-ups': { reset() {}, update() { return { count: 0, state: 'lowered' }; } },
+      lunges: { reset() {}, update() { return { count: 0, state: 'standing' }; } },
+    }),
+  });
+  controller.setGoal(10);
+  controller.setCountEachRep(true);
+  controller.setVoiceEnabled(true);
+  await controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  emitReadyFrames(onPose, 'squats');
+  count = 1;
+  onPose(createReadyLandmarks('squats'), 200);
+  onPose(createReadyLandmarks('squats'), 233);
+  count = 2;
+  onPose(createReadyLandmarks('squats'), 266);
+  onPose(createReadyLandmarks('squats'), 299);
+
+  const repetitionKeys = enqueueResults
+    .map(({ eventKey }) => JSON.parse(eventKey))
+    .filter(([messageId]) => messageId === 'repetition-count');
+  assert.equal(repetitionKeys.length, 2);
+  assert.deepEqual(repetitionKeys.map(([, , , parameters]) => parameters.count), [1, 2]);
+  const correctionResults = enqueueResults.filter(({ eventKey }) =>
+    JSON.parse(eventKey)[0] === 'adjust-alignment',
+  );
+  assert.equal(correctionResults.filter(({ accepted }) => accepted).length, 1);
+  assert.ok(correctionResults.some(({ accepted }) => !accepted));
+
+  releaseWelcome(true);
+  await flushSpeechQueue();
+  assert.deepEqual(
+    speechEvents.filter(({ messageId }) => messageId === 'repetition-count').map(({ text }) => text),
+    ['1.', '2.'],
+  );
+  assert.equal(speechEvents.filter(({ messageId }) => messageId === 'adjust-alignment').length, 1);
+});
+
+test('workout instructions use the selected exercise phrase for all six exercises', async () => {
+  const exercises = Object.entries(EXERCISE_INSTRUCTION_IDS);
+  for (const [exerciseId, instructionId] of exercises) {
+    const speechEvents = [];
+    let onPose;
+    const controller = createWorkoutController({
+      video: {},
+      canvas: {},
+      speechQueue: createSpeechQueue({ delay: async () => {} }),
+      speechCoach: {
+        setEnabled() {},
+        speak(messageId, text, language) {
+          speechEvents.push({ messageId, text, language });
+          return true;
+        },
+        cancel() {},
+      },
+      startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+      stopCamera() {},
+      createPoseTracker: (callbacks) => ({
+        async start() { onPose = callbacks.onPose; },
+        stop() {},
+        pause() {},
+        resume() {},
+      }),
+      createAnalyzers: () => ({
+        squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+        'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+        plank: { reset() {}, update: () => ({ elapsedMs: 0, state: 'waiting' }) },
+        'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+        'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+        lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+      }),
+    });
+    controller.selectExercise(exerciseId);
+    controller.setVoiceEnabled(true);
+    await controller.start();
+    emitReadyFrames(onPose, exerciseId);
+    await flushSpeechQueue();
+
+    const instruction = speechEvents.find(({ messageId }) => messageId === instructionId);
+    assert.ok(instruction, `${exerciseId} instruction was not spoken`);
+    assert.equal(instruction.text, translateMessage(instructionId, 'en').text);
+    for (const [, otherInstructionId] of exercises) {
+      if (otherInstructionId !== instructionId) {
+        assert.ok(!instruction.text.includes(translateMessage(otherInstructionId, 'en').text));
+      }
+    }
+  }
+});
+
+test('workout speech uses the selected locale across all five supported languages', async () => {
+  for (const language of ['en', 'yo', 'ig', 'ha', 'pcm']) {
+    const browserSpeech = [];
+    const synthesisRequests = [];
+    const playedBlobs = [];
+    const voice = `${language}-voice`;
+    let onPose;
+    const controller = createWorkoutController({
+      video: {},
+      canvas: {},
+      speechQueue: createSpeechQueue({ delay: async () => {} }),
+      audioCoach: {
+        async listVoices() {
+          return [{ id: voice, languages: [language], isDefault: true }];
+        },
+        async synthesizeAudio(payload) {
+          synthesisRequests.push(payload);
+          return new Blob(['audio']);
+        },
+      },
+      voicePlayback: {
+        async play(blob) { playedBlobs.push(blob); return true; },
+        setMuted() {},
+        setVolume() {},
+      },
+      speechCoach: {
+        setEnabled() {},
+        speak(messageId, text, languageCode) {
+          browserSpeech.push({ messageId, text, languageCode });
+          return true;
+        },
+        cancel() {},
+      },
+      startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+      stopCamera() {},
+      createPoseTracker: (callbacks) => ({
+        async start() { onPose = callbacks.onPose; },
+        stop() {},
+        pause() {},
+        resume() {},
+      }),
+      createAnalyzers: () => ({
+        squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+        'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+        plank: { reset() {}, update: () => ({ elapsedMs: 0, state: 'waiting' }) },
+        'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+        'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+        lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+      }),
+    });
+    controller.setLanguage(language);
+    controller.setVoiceEnabled(true);
+    await controller.refreshVoiceCatalog();
+    await controller.start();
+    emitReadyFrames(onPose, 'squats');
+    await flushSpeechQueue();
+
+    if (language === 'en') {
+      assert.ok(browserSpeech.some(({ messageId, languageCode }) =>
+        messageId === 'workout-countdown' && languageCode === language,
+      ));
+      assert.equal(synthesisRequests.length, 0);
+    } else {
+      assert.ok(synthesisRequests.length > 0);
+      assert.ok(synthesisRequests.every((request) =>
+        request.language === language && request.voice === voice,
+      ));
+      assert.equal(playedBlobs.length, synthesisRequests.length);
+      assert.equal(browserSpeech.length, 0);
+    }
+  }
+});
+
+test('plank five-second cue uses elapsed progress and its actual target', async () => {
+  const queue = createSpeechQueue({ delay: async () => {} });
+  const queuedEvents = [];
+  const speechEvents = [];
+  let elapsedMs = 0;
+  let onPose;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: {
+      enqueue(item) {
+        queuedEvents.push(item);
+        return queue.enqueue(item);
+      },
+      clearPending: () => queue.clearPending(),
+      cancel: () => queue.cancel(),
+    },
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text, language) {
+        speechEvents.push({ messageId, text, language });
+        return true;
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+      'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+      plank: { reset() {}, update: () => ({ elapsedMs, active: true, state: 'aligned' }) },
+      'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+      'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+      lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+    }),
+  });
+  controller.selectExercise('plank');
+  controller.setGoal(10);
+  controller.setVoiceEnabled(true);
+  await controller.start();
+  emitReadyFrames(onPose, 'plank');
+  elapsedMs = 4000;
+  onPose(createReadyLandmarks('plank'), 100);
+  elapsedMs = 5000;
+  onPose(createReadyLandmarks('plank'), 200);
+  await flushSpeechQueue();
+
+  const cueEvent = queuedEvents.find(({ eventKey }) =>
+    JSON.parse(eventKey)[0] === 'plank-five-seconds-left',
+  );
+  assert.ok(cueEvent);
+  assert.deepEqual(JSON.parse(cueEvent.eventKey)[3], { count: 5, target: 10 });
+  assert.ok(speechEvents.some(({ messageId }) => messageId === 'plank-five-seconds-left'));
+});
+
+test('language changes re-render the last coaching event with its parameters', async () => {
+  let count = 0;
+  let onPose;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: { reset() {}, update() { return { count, state: 'standing' }; } },
+      'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+      plank: { reset() {}, update: () => ({ elapsedMs: 0, state: 'waiting' }) },
+      'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+      'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+      lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+    }),
+  });
+  controller.setGoal(4);
+  await controller.start();
+  emitReadyFrames(onPose, 'squats');
+  count = 1;
+  onPose(createReadyLandmarks('squats'), 100);
+
+  assert.equal(controller.getState().feedbackId, 'milestone-reps');
+  controller.setLanguage('yo');
+  assert.equal(
+    controller.getState().feedback,
+    translateMessage('milestone-reps', 'yo', { count: 1, target: 4 }).text,
+  );
 });
 
 test('changing language refreshes compatible voices and cancels current playback', async () => {

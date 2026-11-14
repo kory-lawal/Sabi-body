@@ -6,7 +6,11 @@ import { createPushUpAnalyzer } from '../exercises/push-ups.js';
 import { createSquatAnalyzer } from '../exercises/squat.js';
 import { createSitUpAnalyzer } from '../exercises/sit-ups.js';
 import { createLungeAnalyzer } from '../exercises/lunges.js';
-import { LANGUAGES, translateMessage } from '../feedback/messages.js';
+import {
+  EXERCISE_INSTRUCTION_IDS,
+  LANGUAGES,
+  translateMessage,
+} from '../feedback/messages.js';
 import {
   COACH_PERSONALITIES,
   getPersonalityMessageId,
@@ -15,6 +19,7 @@ import {
   savePersonality,
 } from '../feedback/personality.js';
 import { loadVoicePreferences, saveVoicePreferences } from '../feedback/preferences.js';
+import { createSpeechQueue } from '../feedback/speech-queue.js';
 import { createSpeechCoach } from '../feedback/speech.js';
 import { createBrowserAudioSample } from '../feedback/browser-audio-sample.js';
 import { createVoicePlaybackManager } from '../feedback/voice-playback.js';
@@ -26,7 +31,24 @@ import { createPoseTracker } from '../pose/pose-tracker.js';
 import { createVoiceClient } from '../services/voice-client.js';
 import { EXERCISES } from './exercise-content.js';
 
+const MOBILE_WORKOUT_QUERY =
+  '(max-width: 480px), (max-width: 900px) and (max-height: 430px) and (orientation: landscape) and (pointer: coarse)';
+
 const MIN_YARNGPT_TEXT_CHARACTERS = 20;
+
+const ESSENTIAL_CORRECTIONS = new Set([
+  'body-not-visible',
+  'adjust-alignment',
+  'move-lower',
+  'return-to-start',
+]);
+const CONTROL_ANNOUNCEMENTS = new Set([
+  'welcome',
+  'workout-countdown',
+  'workout-paused',
+  'workout-resumed',
+  'plank-five-seconds-left',
+]);
 
 const GOAL_PRESETS = {
   squats: [5, 10, 15, 20, 25, 30, 50],
@@ -205,6 +227,7 @@ export function createWorkoutController({
   speechCoach,
   audioCoach,
   voicePlayback,
+  speechQueue,
   storage,
   getMediaElements,
   diagnosticsEnabled = import.meta.env?.DEV === true,
@@ -224,9 +247,7 @@ export function createWorkoutController({
   let startPromise = null;
   let generation = 0;
   let trackEndedHandler = null;
-  let lastVoiceEventKey = null;
-  let lastVoiceEventAt = -Infinity;
-  let lastCorrectionAt = -Infinity;
+  let lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
   let voiceGeneration = 0;
   let voiceCatalogRequest = null;
   let preparedVoiceAudio = null;
@@ -234,6 +255,11 @@ export function createWorkoutController({
   let completionHandled = false;
   let countdownAnnounced = false;
   let announcedMilestones = new Set();
+  const workoutSpeechQueue = speechQueue ?? createSpeechQueue({
+    onError: (error) => {
+      update({ voiceStatus: `${error.message} Written coaching is still available.` });
+    },
+  });
 
   const coach =
     speechCoach ??
@@ -313,14 +339,14 @@ export function createWorkoutController({
     analyzers[state.selectedExercise].invalidatePhase?.();
   }
 
-  function getYarnGptText(text) {
+  function getYarnGptText(text, language = state.language, personality = state.personality) {
     const message = String(text ?? '').trim();
     if (Array.from(message).length >= MIN_YARNGPT_TEXT_CHARACTERS) {
       return message;
     }
     const continuation = lookupMessage(
-      getPersonalityMessageId(state.personality, 'keep-going'),
-      state.language,
+      getPersonalityMessageId(personality, 'keep-going'),
+      language,
       {},
     ).text.trim();
     return `${message} ${continuation}`.trim();
@@ -330,6 +356,7 @@ export function createWorkoutController({
     const localizedMessageId = getPersonalityMessageId(state.personality, feedbackId);
     const translated = lookupMessage(localizedMessageId, state.language, parameters);
     if (!spokenOnly) {
+      lastFeedbackEvent = { feedbackId, parameters: { ...parameters } };
       update({
         feedbackId,
         feedback: translated.text,
@@ -339,90 +366,69 @@ export function createWorkoutController({
     }
 
     const voiceEventKey = JSON.stringify([
-      feedbackId,
+      localizedMessageId,
       state.language,
       state.personality,
       parameters,
     ]);
-    const isNewEvent = voiceEventKey !== lastVoiceEventKey;
     const isCompletion = ['exercise-completed', 'plank-completed'].includes(feedbackId);
-    const isStartupEvent = ['welcome', 'workout-countdown'].includes(feedbackId);
-    const isEssentialCorrection = [
-      'body-not-visible',
-      'adjust-alignment',
-      'move-lower',
-      'return-to-start',
-    ].includes(feedbackId);
-    const now = globalThis.performance?.now?.() ?? Date.now();
-    const cooldownElapsed = now - lastVoiceEventAt >= 4500;
-    const correctionCooldownElapsed = now - lastCorrectionAt >= 4500;
+    const isEssentialCorrection = ESSENTIAL_CORRECTIONS.has(feedbackId);
     const speakable = isSpeakableFeedback(state.personality, feedbackId) ||
       (feedbackId === 'repetition-count' && state.countEachRep);
-    const countAnnouncement = feedbackId === 'repetition-count' && state.countEachRep;
-    if (!suppressVoice && isNewEvent && state.voiceEnabled && speakable && (cooldownElapsed || isCompletion || countAnnouncement || isStartupEvent || (isEssentialCorrection && correctionCooldownElapsed))) {
-      lastVoiceEventAt = now;
-      if (isEssentialCorrection) {
-        lastCorrectionAt = now;
-      }
+    if (!suppressVoice && state.voiceEnabled && speakable) {
       const requestGeneration = voiceGeneration;
-      if (state.language === 'en') {
-        try {
-          const spokenMessageId = getPersonalityMessageId(state.personality, feedbackId);
-          coach.speak(spokenMessageId, translated.text, state.language);
-        } catch (error) {
-          update({ voiceStatus: `${error.message} Written coaching remains available.` });
+      const language = state.language;
+      const personality = state.personality;
+      const spokenMessageId = localizedMessageId;
+      const text = translated.text;
+      const queuedVoiceId = selectVoiceId(language);
+      const priority = isCompletion
+        ? 100
+        : isEssentialCorrection
+          ? 80
+          : CONTROL_ANNOUNCEMENTS.has(feedbackId)
+            ? 70
+            : feedbackId === 'repetition-count'
+              ? 50
+              : 30;
+      const play = language === 'en'
+        ? () => {
+          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          return coach.speak(spokenMessageId, text, language);
         }
-      } else if (audioCoach?.synthesizeAudio) {
-        const language = state.language;
-        const personality = state.personality;
-        const synthesizeWithVoice = (voice) => {
-          if (!voice) {
+        : async () => {
+          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!audioCoach?.synthesizeAudio) {
+            throw new Error('Voice service is unavailable.');
+          }
+          let voiceId = queuedVoiceId;
+          if (!voiceId || !state.availableVoices.some((voice) =>
+            voice.id === voiceId && isVoiceCompatible(voice, language),
+          )) {
+            voiceId = await resolveVoiceId(language, requestGeneration);
+          }
+          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!voiceId) {
             throw new Error(state.voiceCatalogStatus || `No compatible voice is available for ${language}.`);
           }
-          return audioCoach.synthesizeAudio({
-            text: getYarnGptText(translated.text),
+          const audio = await audioCoach.synthesizeAudio({
+            text: getYarnGptText(text, language, personality),
             language,
-            voice,
+            voice: voiceId,
           });
-        };
-        let audioRequest;
-        try {
-          if (voiceCatalogRequest) {
-            audioRequest = voiceCatalogRequest.then(() => {
-              if (requestGeneration !== voiceGeneration || !state.voiceEnabled) {
-                return null;
-              }
-              return synthesizeWithVoice(selectVoiceId(language));
-            });
-          } else if (state.availableVoices.length) {
-            audioRequest = synthesizeWithVoice(selectVoiceId(language));
-          } else {
-            audioRequest = resolveVoiceId(language, requestGeneration).then((voice) => {
-              if (requestGeneration !== voiceGeneration || !state.voiceEnabled) {
-                return null;
-              }
-              return synthesizeWithVoice(voice);
-            });
+          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!voicePlayback?.play) {
+            throw new Error('Audio playback is unavailable.');
           }
-        } catch (error) {
-          audioRequest = Promise.reject(error);
-        }
-        Promise.resolve(audioRequest)
-          .then((audio) => {
-            if (audio && requestGeneration === voiceGeneration && state.voiceEnabled) {
-              return voicePlayback?.play(audio, {
-                priority: isCompletion ? 100 : 50,
-                eventKey: voiceEventKey,
-              });
-            }
-            return undefined;
-          })
-          .catch((error) => {
-            update({ voiceStatus: `${error.message} Written coaching remains available.` });
-          });
-      }
+          return await voicePlayback.play(audio);
+        };
+      workoutSpeechQueue.enqueue({
+        eventKey: voiceEventKey,
+        priority,
+        play,
+        cancel: () => (language === 'en' ? coach.cancel?.() : voicePlayback?.stop?.()),
+      });
     }
-    lastVoiceEventKey = voiceEventKey;
   }
 
   function announceMilestone(currentCompleted, previousCompleted) {
@@ -432,6 +438,14 @@ export function createWorkoutController({
 
     const target = getWorkoutProgress().target;
     const isPlank = state.selectedExercise === 'plank';
+    if (
+      isPlank &&
+      target > 5 &&
+      previousCompleted < target - 5 &&
+      currentCompleted >= target - 5
+    ) {
+      setFeedback('plank-five-seconds-left', { count: currentCompleted, target });
+    }
     const thresholds = getMilestoneThresholds(target);
     if (!isPlank && target > 5) {
       thresholds.push(target - 5);
@@ -471,9 +485,6 @@ export function createWorkoutController({
     }
     releaseResources({ stopTracker: false });
 
-    voiceGeneration += 1;
-    coach.cancel?.();
-    voicePlayback?.stop?.();
     const target = getWorkoutProgress().target;
     const unit = state.selectedExercise === 'plank' ? 'seconds' : 'reps';
     const completedWorkout = {
@@ -749,6 +760,10 @@ export function createWorkoutController({
         if (!countdownAnnounced) {
           countdownAnnounced = true;
           setFeedback('workout-countdown');
+          const instructionId = EXERCISE_INSTRUCTION_IDS[state.selectedExercise];
+          if (instructionId) {
+            setFeedback(instructionId, {}, { spokenOnly: true });
+          }
         }
         return true;
       }
@@ -780,7 +795,7 @@ export function createWorkoutController({
     invalidateCurrentPhase();
     if (resetProgress) {
       analyzers[state.selectedExercise].reset();
-      lastVoiceEventKey = null;
+      workoutSpeechQueue.clearPending();
       update({
         workoutStatus: 'loading',
         cameraStatus: 'starting',
@@ -838,6 +853,7 @@ export function createWorkoutController({
     }
     completionHandled = false;
     voiceGeneration += 1;
+    workoutSpeechQueue.cancel();
     coach.cancel?.();
     voicePlayback?.stop?.();
     tracker?.pause();
@@ -911,7 +927,8 @@ export function createWorkoutController({
     completionHandled = false;
     announcedMilestones = new Set();
     countdownAnnounced = false;
-    lastVoiceEventKey = null;
+    workoutSpeechQueue.clearPending();
+    lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
     update({
       exerciseState: 'waiting',
       count: 0,
@@ -933,10 +950,11 @@ export function createWorkoutController({
   async function end() {
     generation += 1;
     startPromise = null;
+    workoutSpeechQueue.clearPending();
     releaseResources();
     interrupted = false;
-    lastVoiceEventKey = null;
     countdownAnnounced = false;
+    lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
     analyzers[state.selectedExercise].reset();
     update({
       view: 'home',
@@ -972,6 +990,7 @@ export function createWorkoutController({
     analyzers[state.selectedExercise].reset();
     countdownAnnounced = false;
     completionHandled = false;
+    lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
     state = {
       ...state,
       selectedExercise: exerciseId,
@@ -1006,6 +1025,7 @@ export function createWorkoutController({
       return;
     }
     voiceGeneration += 1;
+    workoutSpeechQueue.cancel();
     preparedVoiceAudio = null;
     voicePlayback?.stop?.();
     try {
@@ -1014,7 +1034,7 @@ export function createWorkoutController({
       // A language change must not interrupt workout controls if speech cleanup fails.
     }
     persistVoicePreferences({ language });
-    setFeedback(state.feedbackId, {}, { suppressVoice: true });
+    setFeedback(lastFeedbackEvent.feedbackId, lastFeedbackEvent.parameters, { suppressVoice: true });
     if (state.voiceEnabled) {
       void refreshVoiceCatalog();
     }
@@ -1034,6 +1054,7 @@ export function createWorkoutController({
     const voiceEnabled = Boolean(enabled);
     if (!voiceEnabled) {
       voiceGeneration += 1;
+      workoutSpeechQueue.cancel();
       voicePlayback?.stop?.();
     }
     try {
@@ -1374,6 +1395,33 @@ function personalityOptions(selectedPersonality) {
   ).join('');
 }
 
+function mobileSettingsMarkup(state) {
+  return `
+    <div class="mobile-settings" data-mobile-settings-root>
+      <button
+        class="mobile-settings__toggle"
+        type="button"
+        data-action="toggle-mobile-settings"
+        aria-label="Open language and coach settings"
+        aria-controls="mobile-settings"
+        aria-expanded="false"
+      >
+        <span class="mobile-settings__icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Menu</span>
+      </button>
+      <div class="mobile-settings__panel" id="mobile-settings" data-mobile-settings data-open="false">
+        <label class="personality-control">
+          <span>Coach style</span>
+          <select data-action="personality" aria-label="Choose coaching personality">${personalityOptions(state.personality)}</select>
+        </label>
+        <label class="language-control">
+          <span>Language</span>
+          <select data-action="language" aria-label="Choose coaching language">${languageOptions(state.language)}</select>
+        </label>
+      </div>
+    </div>`;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -1434,6 +1482,7 @@ function goalOptions(exerciseId, selectedTarget) {
             type="button"
             data-action="set-goal"
             data-target="${value}"
+            aria-pressed="${value === selectedTarget}"
           >${exerciseId === 'plank' ? `${value}s` : value}</button>
         `,
       ).join('')}
@@ -1523,14 +1572,7 @@ function renderHome(root, state) {
       <header class="site-header">
         ${brandLogoMarkup()}
         <p class="tagline">The sabi-sabi fitness coach</p>
-        <label class="personality-control">
-          <span>Coach style</span>
-          <select data-action="personality" aria-label="Choose coaching personality">${personalityOptions(state.personality)}</select>
-        </label>
-        <label class="language-control">
-          <span>Language</span>
-          <select data-action="language" aria-label="Choose coaching language">${languageOptions(state.language)}</select>
-        </label>
+        ${mobileSettingsMarkup(state)}
       </header>
       <p class="storage-warning" data-personality-warning role="status" hidden></p>
       <section class="welcome" aria-labelledby="welcome-title">
@@ -1665,7 +1707,7 @@ function renderWorkout(root, state) {
     <div class="goal-panel">
       <div class="goal-panel__header">
         <h2>Workout goal</h2>
-        <strong>${isPlank ? `${state.target}s` : `${state.target} reps`}</strong>
+        <strong data-goal-target>${getViewTargetLabel(state.selectedExercise, state.target)}</strong>
       </div>
       ${goalOptions(state.selectedExercise, state.target)}
       ${state.storageWarning ? `<p class="storage-warning">${state.storageWarning}</p>` : ''}
@@ -1677,14 +1719,7 @@ function renderWorkout(root, state) {
       <header class="site-header workout-header">
         ${brandLogoMarkup()}
         <p class="tagline">The sabi-sabi fitness coach</p>
-        <label class="personality-control">
-          <span>Coach style</span>
-          <select data-action="personality" aria-label="Choose coaching personality">${personalityOptions(state.personality)}</select>
-        </label>
-        <label class="language-control">
-          <span>Language</span>
-          <select data-action="language" aria-label="Choose coaching language">${languageOptions(state.language)}</select>
-        </label>
+        ${mobileSettingsMarkup(state)}
       </header>
       <p class="storage-warning" data-personality-warning role="status" hidden></p>
       <div class="workout-heading">
@@ -1734,7 +1769,7 @@ function renderWorkout(root, state) {
               <h2 id="progress-title">${exercise.progressLabel}</h2>
               <span class="exercise-state" data-exercise-state>Waiting to start</span>
             </div>
-            <p class="progress-value${isPlank ? ' progress-value--timer' : ''}" data-progress>${isPlank ? '00:00' : '0'}</p>
+            <p class="progress-value${isPlank ? ' progress-value--timer' : ''}" data-progress>${isPlank ? '00:00' : `${initialCompleted} / ${state.target} reps`}</p>
             <p class="progress-caption">${isPlank ? 'Time in a steady position' : 'Complete reps'}</p>
             <p class="progress-meta" data-progress-meta>${initialCompleted}/${state.target} • ${initialRemaining} remaining • ${Math.round(initialPercent)}%</p>
           </div>
@@ -1744,25 +1779,35 @@ function renderWorkout(root, state) {
             <p class="fallback-notice" data-fallback hidden>English text shown; translation unavailable.</p>
             <p class="fallback-notice" data-translation-draft hidden>Translation is an unverified draft; review it with a fluent speaker.</p>
           </section>
-          <div class="voice-row">
-            <label class="voice-toggle">
-              <input type="checkbox" data-action="voice" ${state.voiceEnabled ? 'checked' : ''} />
-              <span class="voice-toggle__switch" aria-hidden="true"></span>
-              <span>Voice coaching</span>
-            </label>
-            <label class="voice-volume">
-              <span>Volume</span>
-              <input type="range" min="0" max="1" step="0.05" value="${state.voiceVolume}" data-action="voice-volume" aria-label="Voice volume" />
-            </label>
-            <label class="voice-choice">
-              <span>Voice</span>
-              <select data-action="voice-id" aria-label="Choose a discovered voice" ${state.availableVoices.length ? '' : 'disabled'}>${voiceOptions(state)}</select>
-            </label>
-            <label class="rep-count-toggle">
-              <input type="checkbox" data-action="count-each-rep" ${state.countEachRep ? 'checked' : ''} />
-              <span>Speak each rep</span>
-            </label>
+          <button
+            class="mobile-voice-settings-toggle"
+            type="button"
+            data-action="toggle-mobile-voice-settings"
+            aria-controls="mobile-voice-settings"
+            aria-expanded="false"
+          >Voice options</button>
+          <div class="mobile-voice-settings" id="mobile-voice-settings" data-mobile-voice-settings data-open="false">
+            <div class="voice-row">
+              <label class="voice-toggle">
+                <input type="checkbox" data-action="voice" ${state.voiceEnabled ? 'checked' : ''} />
+                <span class="voice-toggle__switch" aria-hidden="true"></span>
+                <span>Voice coaching</span>
+              </label>
+              <label class="voice-volume">
+                <span>Volume</span>
+                <input type="range" min="0" max="1" step="0.05" value="${state.voiceVolume}" data-action="voice-volume" aria-label="Voice volume" />
+              </label>
+              <label class="voice-choice">
+                <span>Voice</span>
+                <select data-action="voice-id" aria-label="Choose a discovered voice" ${state.availableVoices.length ? '' : 'disabled'}>${voiceOptions(state)}</select>
+              </label>
+              <label class="rep-count-toggle">
+                <input type="checkbox" data-action="count-each-rep" ${state.countEachRep ? 'checked' : ''} />
+                <span>Speak each rep</span>
+              </label>
+            </div>
           </div>
+          <p data-fullscreen-status role="status" aria-live="polite" hidden></p>
           <p class="voice-test-status" data-voice-status role="status" aria-live="polite">${escapeHtml(state.voiceStatus)}</p>
           ${voiceTestPanel()}
           <div class="workout-controls" aria-label="Workout controls">
@@ -1780,9 +1825,26 @@ function renderWorkout(root, state) {
 
 function updateWorkout(root, state) {
   const isPlank = state.selectedExercise === 'plank';
+  const goalTarget = root.querySelector('[data-goal-target]');
+  const goalTargetText = getViewTargetLabel(state.selectedExercise, state.target);
+  if (goalTarget && goalTarget.textContent !== goalTargetText) {
+    goalTarget.textContent = goalTargetText;
+  }
+  for (const button of root.querySelectorAll('[data-action="set-goal"]')) {
+    const selected = Number(button.dataset.target) === state.target;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  const customGoal = root.querySelector('[data-action="goal-custom"]');
+  if (customGoal && customGoal.value !== String(state.target)) {
+    customGoal.value = String(state.target);
+  }
+
   const progress = root.querySelector('[data-progress]');
   if (progress) {
-    const value = isPlank ? formatTime(state.elapsedMs) : String(state.count);
+    const value = isPlank
+      ? formatTime(state.elapsedMs)
+      : `${state.count ?? 0} / ${state.target} reps`;
     if (progress.textContent !== value) {
       progress.textContent = value;
     }
@@ -1957,9 +2019,91 @@ export function mountApp(root, {
     throw new Error('Cannot start Sabi Body: the app root (#app) was not found.');
   }
 
+  const ownerDocument = root.ownerDocument;
   let currentScreen = null;
   let latestState = makeInitialState();
   let controller;
+
+  function setMobileSettingsOpen(open) {
+    const toggle = root.querySelector('[data-action="toggle-mobile-settings"]');
+    const panel = root.querySelector('[data-mobile-settings]');
+    if (!toggle || !panel) {
+      return;
+    }
+    toggle.setAttribute('aria-expanded', String(open));
+    panel.dataset.open = String(open);
+  }
+
+  function setMobileVoiceSettingsOpen(open) {
+    const toggle = root.querySelector('[data-action="toggle-mobile-voice-settings"]');
+    const panel = root.querySelector('[data-mobile-voice-settings]');
+    if (!toggle || !panel) {
+      return;
+    }
+    toggle.setAttribute('aria-expanded', String(open));
+    panel.dataset.open = String(open);
+  }
+
+  function reportFullscreenExitError(error) {
+    const status = root.querySelector('[data-fullscreen-status]')
+      ?? root.querySelector('[data-workout-status]');
+    if (status) {
+      status.hidden = false;
+      status.textContent = `Unable to exit fullscreen: ${error.message}`;
+      return;
+    }
+    globalThis.console?.error?.('Unable to exit workout fullscreen.', error);
+  }
+
+  function exitFullscreenIfOwned(workoutPage) {
+    if (
+      !workoutPage ||
+      ownerDocument?.fullscreenElement !== workoutPage ||
+      typeof ownerDocument.exitFullscreen !== 'function'
+    ) {
+      return;
+    }
+    try {
+      void Promise.resolve(ownerDocument.exitFullscreen()).catch(reportFullscreenExitError);
+    } catch (error) {
+      reportFullscreenExitError(error);
+    }
+  }
+
+  function requestMobileFullscreen(workoutPage) {
+    const status = workoutPage?.querySelector?.('[data-fullscreen-status]');
+    const showFallback = () => {
+      if (status) {
+        status.hidden = false;
+        status.textContent = 'Fullscreen unavailable; the camera view remains active.';
+      }
+    };
+    if (typeof workoutPage?.requestFullscreen !== 'function') {
+      showFallback();
+      return;
+    }
+    try {
+      void Promise.resolve(workoutPage.requestFullscreen())
+        .then(() => {
+          const active = ['loading', 'running', 'paused'].includes(
+            controller.getState().workoutStatus,
+          );
+          if (!active && ownerDocument?.fullscreenElement === workoutPage) {
+            exitFullscreenIfOwned(workoutPage);
+          }
+        })
+        .catch(showFallback);
+    } catch {
+      showFallback();
+    }
+  }
+
+  function isMobileWorkoutViewport() {
+    const view = ownerDocument?.defaultView;
+    const matchMedia = view?.matchMedia ?? globalThis.matchMedia;
+    return typeof matchMedia === 'function'
+      && Boolean(matchMedia.call(view ?? globalThis, MOBILE_WORKOUT_QUERY).matches);
+  }
 
   function render(state) {
     latestState = state;
@@ -1969,6 +2113,11 @@ export function mountApp(root, {
         ? 'completion'
         : 'workout';
     if (screen !== currentScreen) {
+      setMobileSettingsOpen(false);
+      setMobileVoiceSettingsOpen(false);
+      if (!['loading', 'running', 'paused'].includes(state.workoutStatus)) {
+        exitFullscreenIfOwned(root.querySelector('.workout-page'));
+      }
       currentScreen = screen;
       if (screen === 'home') {
         renderHome(root, state);
@@ -1992,6 +2141,10 @@ export function mountApp(root, {
         personality.value = state.personality;
       }
     }
+
+    const workoutActive = ['loading', 'running', 'paused'].includes(state.workoutStatus);
+    root.querySelector('.workout-page')?.classList?.toggle('is-active', workoutActive);
+    ownerDocument?.body?.classList?.toggle('workout-active', workoutActive);
 
     const personalityWarning = root.querySelector('[data-personality-warning]');
     if (personalityWarning) {
@@ -2056,8 +2209,21 @@ export function mountApp(root, {
         controller.selectExercise(button.dataset.exercise);
         break;
       case 'start':
+        if (isMobileWorkoutViewport()) {
+          requestMobileFullscreen(root.querySelector('.workout-page'));
+        }
         void controller.start();
         break;
+      case 'toggle-mobile-settings': {
+        const panel = root.querySelector('[data-mobile-settings]');
+        setMobileSettingsOpen(panel?.dataset.open !== 'true');
+        break;
+      }
+      case 'toggle-mobile-voice-settings': {
+        const panel = root.querySelector('[data-mobile-voice-settings]');
+        setMobileVoiceSettingsOpen(panel?.dataset.open !== 'true');
+        break;
+      }
       case 'pause':
         controller.pause();
         break;
@@ -2121,10 +2287,12 @@ export function mountApp(root, {
     const control = event.target;
     if (control.matches?.('[data-action="language"]')) {
       controller.setLanguage(control.value);
+      setMobileSettingsOpen(false);
     } else if (control.matches?.('[data-action="voice"]')) {
       controller.setVoiceEnabled(control.checked);
     } else if (control.matches?.('[data-action="personality"]')) {
       controller.setPersonality(control.value);
+      setMobileSettingsOpen(false);
     } else if (control.matches?.('[data-action="voice-volume"]')) {
       controller.setVoiceVolume(control.value);
     } else if (control.matches?.('[data-action="voice-id"]')) {
@@ -2135,6 +2303,32 @@ export function mountApp(root, {
       controller.setTargetFromCustom(control.value);
     }
   });
+
+  root.addEventListener('input', (event) => {
+    const control = event.target;
+    if (
+      control.matches?.('[data-action="goal-custom"]') &&
+      control.value !== '' &&
+      control.validity?.valid
+    ) {
+      controller.setTargetFromCustom(control.value);
+    }
+  });
+
+  if (typeof ownerDocument?.addEventListener === 'function') {
+    ownerDocument.addEventListener('pointerdown', (event) => {
+      const settingsRoot = root.querySelector('[data-mobile-settings-root]');
+      if (settingsRoot && !settingsRoot.contains(event.target)) {
+        setMobileSettingsOpen(false);
+      }
+    });
+    ownerDocument.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        setMobileSettingsOpen(false);
+        setMobileVoiceSettingsOpen(false);
+      }
+    });
+  }
 
   render(latestState);
   return controller;

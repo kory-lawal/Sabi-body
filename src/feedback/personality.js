@@ -1,3 +1,5 @@
+import { EXERCISE_INSTRUCTION_IDS } from './messages.js';
+
 export const COACH_PERSONALITIES = [
   {
     id: 'quiet',
@@ -29,11 +31,13 @@ const QUIET_FEEDBACK = new Set([
   'plank-completed',
   'return-to-start',
   'workout-countdown',
+  ...Object.values(EXERCISE_INSTRUCTION_IDS),
 ]);
 const FRIENDLY_FEEDBACK = new Set([
   ...QUIET_FEEDBACK,
   'aligned',
   'great-job',
+  'plank-five-seconds-left',
   'welcome',
 ]);
 const ENERGETIC_VARIANTS = new Set([
