@@ -1509,7 +1509,6 @@ test('optional spoken rep counts follow analyzer increments and completion takes
     'Tẹ eékún rẹ kí o sì ti ìgbáròkó rẹ sẹ́yìn, lẹ́yìn náà dìde dúró.',
     '1. Tẹsiwaju ni iyara ti o ba ọ mu.',
     'O ti pari adaṣe. O ṣeun!',
-    '2. Tẹsiwaju ni iyara ti o ba ọ mu.',
   ]);
 });
 
