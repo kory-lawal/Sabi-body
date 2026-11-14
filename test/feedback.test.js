@@ -5,6 +5,7 @@ import {
   COACHING_PHRASES,
   EXERCISE_INSTRUCTION_IDS,
   LANGUAGES,
+  SELECTABLE_LANGUAGES,
   translateMessage,
 } from '../src/feedback/messages.js';
 import {
@@ -100,6 +101,13 @@ test('LANGUAGES includes every supported language code', () => {
   assert.deepEqual(
     LANGUAGES.map(({ code }) => code),
     EXPECTED_LANGUAGE_CODES,
+  );
+});
+
+test('only English is selectable in the current release', () => {
+  assert.deepEqual(
+    SELECTABLE_LANGUAGES.map(({ code }) => code),
+    ['en'],
   );
 });
 

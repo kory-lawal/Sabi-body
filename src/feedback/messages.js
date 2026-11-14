@@ -14,6 +14,10 @@ export const LANGUAGES = [
   { code: 'pcm', label: 'Nigerian Pidgin' },
 ];
 
+export const SELECTABLE_LANGUAGES = [
+  { code: 'en', label: 'English' },
+];
+
 export function translateMessage(messageId, languageCode, parameters = {}) {
   return translateCoachingMessage(messageId, languageCode, parameters);
 }

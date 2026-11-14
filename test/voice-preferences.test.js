@@ -6,7 +6,7 @@ import {
   saveVoicePreferences,
 } from '../src/feedback/preferences.js';
 
-test('voice preferences default safely and persist valid settings locally', () => {
+test('voice preferences enable automatic coaching by default and persist the mute override', () => {
   const values = new Map();
   const storage = {
     getItem(key) { return values.get(key) ?? null; },
@@ -16,24 +16,42 @@ test('voice preferences default safely and persist valid settings locally', () =
 
   assert.deepEqual(defaults, {
     language: 'en',
-    voiceEnabled: false,
+    voiceEnabled: true,
     voiceVolume: 1,
     voiceId: '',
-    countEachRep: false,
   });
   assert.equal(saveVoicePreferences({
     language: 'yo',
     voiceEnabled: true,
     voiceVolume: 0.4,
     voiceId: 'yoruba-voice',
-    countEachRep: true,
   }, storage), true);
   assert.deepEqual(loadVoicePreferences(storage), {
-    language: 'yo',
+    language: 'en',
     voiceEnabled: true,
     voiceVolume: 0.4,
     voiceId: 'yoruba-voice',
-    countEachRep: true,
+  });
+  assert.equal(saveVoicePreferences({ voiceEnabled: false }, storage), true);
+  assert.equal(loadVoicePreferences(storage).voiceEnabled, false);
+});
+
+test('legacy non-English preferences normalize and prior rep-only mode becomes automatic coaching', () => {
+  const storage = {
+    getItem() {
+      return JSON.stringify({
+        language: 'pcm',
+        voiceEnabled: false,
+        countEachRep: true,
+      });
+    },
+  };
+
+  assert.deepEqual(loadVoicePreferences(storage), {
+    language: 'en',
+    voiceEnabled: true,
+    voiceVolume: 1,
+    voiceId: '',
   });
 });
 
@@ -46,11 +64,10 @@ test('invalid or inaccessible stored voice preferences fall back to safe default
   };
 
   assert.deepEqual(loadVoicePreferences(storage), {
-    language: 'pcm',
-    voiceEnabled: false,
+    language: 'en',
+    voiceEnabled: true,
     voiceVolume: 1,
     voiceId: '',
-    countEachRep: false,
   });
   assert.equal(saveVoicePreferences({ language: 'ig' }, storage), false);
 });

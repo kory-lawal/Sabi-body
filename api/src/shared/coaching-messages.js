@@ -459,7 +459,7 @@ export const COACHING_PHRASES = {
       'You dey do well — you don hold plank for {count} seconds.',
     ),
     'plank-completed': phrase(
-      'Plank complete. Excellent hold!',
+      'Excellent hold! You completed {count} seconds. Take a short rest before your next exercise.',
       'O ti parí plank. O dì í mú dáadáa!',
       'Emechaala plank. Ị jidere ya nke ọma!',
       'An kammala plank. Ka riƙe shi da kyau!',
@@ -468,7 +468,7 @@ export const COACHING_PHRASES = {
   },
   completion: {
     'exercise-completed': phrase(
-      'Exercise completed. Well done!',
+      "Excellent work! You've completed all {count} repetitions. Take a short rest before your next exercise.",
       'O ti pari adaṣe. O ṣeun!',
       'Emechaala mgbatị ahụ. Ị mere nke ọma!',
       'Ka gama motsa jiki. Madalla!',

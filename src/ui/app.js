@@ -9,6 +9,7 @@ import { createLungeAnalyzer } from '../exercises/lunges.js';
 import {
   EXERCISE_INSTRUCTION_IDS,
   LANGUAGES,
+  SELECTABLE_LANGUAGES,
   translateMessage,
 } from '../feedback/messages.js';
 import {
@@ -34,6 +35,12 @@ const MOBILE_WORKOUT_QUERY =
   '(max-width: 480px), (max-width: 900px) and (max-height: 430px) and (orientation: landscape) and (pointer: coarse)';
 
 const MIN_YARNGPT_TEXT_CHARACTERS = 20;
+const VOICE_FAILURE_MESSAGE =
+  'Spoken coaching is temporarily unavailable. Written coaching remains available.';
+
+function logVoiceError(context, error) {
+  globalThis.console?.error?.(`[SabiBody] ${context}`, error);
+}
 
 const ESSENTIAL_CORRECTIONS = new Set([
   'body-not-visible',
@@ -44,6 +51,7 @@ const ESSENTIAL_CORRECTIONS = new Set([
 const CONTROL_ANNOUNCEMENTS = new Set([
   'welcome',
   'workout-countdown',
+  'camera-positioning',
   'workout-paused',
   'workout-resumed',
   'plank-five-seconds-left',
@@ -162,11 +170,10 @@ function makeInitialState() {
     view: 'home',
     selectedExercise,
     language: 'en',
-    voiceEnabled: false,
+    voiceEnabled: true,
     voiceVolume: 1,
     voiceId: '',
-    voiceStatus: 'Voice is off.',
-    countEachRep: false,
+    voiceStatus: 'Automatic voice coaching is on.',
     workoutStatus: 'idle',
     cameraStatus: 'off',
     personDetected: false,
@@ -235,6 +242,9 @@ export function createWorkoutController({
   let state = {
     ...makeInitialState(),
     ...voicePreferences,
+    voiceStatus: voicePreferences.voiceEnabled
+      ? 'Automatic voice coaching is on.'
+      : 'Voice coaching is muted. Written feedback remains available.',
     personality: loadPersonality(storage),
     personalityStorageWarning: '',
   };
@@ -255,23 +265,21 @@ export function createWorkoutController({
   let announcedMilestones = new Set();
   const workoutSpeechQueue = speechQueue ?? createSpeechQueue({
     onError: (error) => {
-      update({ voiceStatus: `${error.message} Written coaching is still available.` });
+      logVoiceError('Spoken coaching failed.', error);
+      update({ voiceStatus: VOICE_FAILURE_MESSAGE });
     },
   });
 
   const coach =
     speechCoach ??
     createSpeechCoach({
-      synthesis: globalThis.speechSynthesis ?? { speak() {}, cancel() {} },
-      Utterance: globalThis.SpeechSynthesisUtterance ?? class {
-        constructor(text) {
-          this.text = text;
-        }
-      },
-      onError: (error) => {
-        update({ statusMessage: `${error.message} Written coaching is still available.` });
+      synthesis: globalThis.speechSynthesis,
+      Utterance: globalThis.SpeechSynthesisUtterance,
+      onError: () => {
+        update({ voiceStatus: VOICE_FAILURE_MESSAGE });
       },
     });
+  coach.setEnabled?.(state.voiceEnabled);
   voicePlayback?.setVolume?.(state.voiceVolume);
   voicePlayback?.setMuted?.(!state.voiceEnabled);
 
@@ -371,15 +379,23 @@ export function createWorkoutController({
     ]);
     const isCompletion = ['exercise-completed', 'plank-completed'].includes(feedbackId);
     const isEssentialCorrection = ESSENTIAL_CORRECTIONS.has(feedbackId);
-    const speakable = isSpeakableFeedback(state.personality, feedbackId) ||
-      (feedbackId === 'repetition-count' && state.countEachRep);
-    if (!suppressVoice && state.voiceEnabled && speakable) {
+    const isRepAnnouncement = feedbackId === 'repetition-count';
+    const shouldSpeak = state.voiceEnabled && (
+      isRepAnnouncement ||
+      CONTROL_ANNOUNCEMENTS.has(feedbackId) ||
+      isSpeakableFeedback(state.personality, feedbackId)
+    );
+    if (!suppressVoice && shouldSpeak) {
       const requestGeneration = voiceGeneration;
       const language = state.language;
       const personality = state.personality;
       const spokenMessageId = localizedMessageId;
       const text = translated.text;
       const queuedVoiceId = selectVoiceId(language);
+      const isModeCurrent = () => (
+        requestGeneration === voiceGeneration &&
+        state.voiceEnabled
+      );
       const priority = isCompletion
         ? 100
         : isEssentialCorrection
@@ -387,15 +403,15 @@ export function createWorkoutController({
           : CONTROL_ANNOUNCEMENTS.has(feedbackId)
             ? 70
             : feedbackId === 'repetition-count'
-              ? 50
+              ? 110
               : 30;
       const play = language === 'en'
         ? () => {
-          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!isModeCurrent()) return false;
           return coach.speak(spokenMessageId, text, language);
         }
         : async () => {
-          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!isModeCurrent()) return false;
           if (!audioCoach?.synthesizeAudio) {
             throw new Error('Voice service is unavailable.');
           }
@@ -405,7 +421,7 @@ export function createWorkoutController({
           )) {
             voiceId = await resolveVoiceId(language, requestGeneration);
           }
-          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!isModeCurrent()) return false;
           if (!voiceId) {
             throw new Error(state.voiceCatalogStatus || `No compatible voice is available for ${language}.`);
           }
@@ -414,7 +430,7 @@ export function createWorkoutController({
             language,
             voice: voiceId,
           });
-          if (requestGeneration !== voiceGeneration || !state.voiceEnabled) return false;
+          if (!isModeCurrent()) return false;
           if (!voicePlayback?.play) {
             throw new Error('Audio playback is unavailable.');
           }
@@ -423,6 +439,7 @@ export function createWorkoutController({
       workoutSpeechQueue.enqueue({
         eventKey: voiceEventKey,
         priority,
+        category: isRepAnnouncement ? 'repetition' : 'coaching',
         play,
         cancel: () => (language === 'en' ? coach.cancel?.() : voicePlayback?.stop?.()),
       });
@@ -456,13 +473,13 @@ export function createWorkoutController({
       if (isPlank) {
         setFeedback('milestone-plank', { count: threshold, target });
       } else if (threshold === target - 1) {
-        setFeedback('final-repetition', { remaining: 1, target });
+        setFeedback('final-repetition', { remaining: 1, target }, { suppressVoice: state.voiceEnabled });
       } else if (threshold === Math.ceil(target / 2)) {
-        setFeedback('halfway', { remaining: target - threshold, target });
+        setFeedback('halfway', { remaining: target - threshold, target }, { suppressVoice: state.voiceEnabled });
       } else if (threshold === target - 5) {
-        setFeedback('remaining-reps', { remaining: 5, target }, { suppressVoice: state.countEachRep });
+        setFeedback('remaining-reps', { remaining: 5, target }, { suppressVoice: state.voiceEnabled });
       } else {
-        setFeedback('milestone-reps', { count: threshold, target }, { suppressVoice: state.countEachRep });
+        setFeedback('milestone-reps', { count: threshold, target }, { suppressVoice: state.voiceEnabled });
       }
     }
   }
@@ -475,7 +492,9 @@ export function createWorkoutController({
     startPromise = null;
     generation += 1;
     invalidateCurrentPhase();
-    workoutSpeechQueue.clearPending();
+    workoutSpeechQueue.clearPending({
+      preserve: ({ category }) => category === 'repetition',
+    });
 
     try {
       tracker?.stop();
@@ -506,7 +525,9 @@ export function createWorkoutController({
       statusMessage: 'Workout complete. Start another workout or return home.',
     });
     setFeedback(state.selectedExercise === 'plank' ? 'plank-completed' : 'exercise-completed', {
-      count: state.count,
+      count: state.selectedExercise === 'plank'
+        ? Math.floor((state.elapsedMs ?? 0) / 1000)
+        : state.count,
       target: state.target,
       remaining: 0,
     });
@@ -679,6 +700,9 @@ export function createWorkoutController({
     });
 
     if (goalAchieved) {
+      if (state.selectedExercise !== 'plank' && state.voiceEnabled && nextCount > previousCount) {
+        setFeedback('repetition-count', { count: displayedCount }, { spokenOnly: true });
+      }
       finishWorkout();
       return {
         readinessReady: false,
@@ -693,7 +717,7 @@ export function createWorkoutController({
 
     if (
       state.selectedExercise !== 'plank' &&
-      state.countEachRep &&
+      state.voiceEnabled &&
       nextCount > previousCount
     ) {
       setFeedback('repetition-count', { count: nextCount }, { spokenOnly: true });
@@ -759,6 +783,7 @@ export function createWorkoutController({
         if (!countdownAnnounced) {
           countdownAnnounced = true;
           setFeedback('workout-countdown');
+          setFeedback('camera-positioning', {}, { spokenOnly: true });
           const instructionId = EXERCISE_INSTRUCTION_IDS[state.selectedExercise];
           if (instructionId) {
             setFeedback(instructionId, {}, { spokenOnly: true });
@@ -948,8 +973,9 @@ export function createWorkoutController({
 
   async function end() {
     generation += 1;
+    voiceGeneration += 1;
     startPromise = null;
-    workoutSpeechQueue.clearPending();
+    workoutSpeechQueue.cancel();
     releaseResources();
     interrupted = false;
     countdownAnnounced = false;
@@ -985,6 +1011,9 @@ export function createWorkoutController({
     if (state.workoutStatus !== 'idle' && state.workoutStatus !== 'error' && state.workoutStatus !== 'completed') {
       return false;
     }
+    voiceGeneration += 1;
+    workoutSpeechQueue.cancel();
+    voicePlayback?.stop?.();
     const nextTarget = loadStoredTarget(exerciseId);
     analyzers[state.selectedExercise].reset();
     countdownAnnounced = false;
@@ -1016,11 +1045,14 @@ export function createWorkoutController({
       target: nextTarget,
       storageWarning: '',
     });
+    if (state.voiceEnabled) {
+      void refreshVoiceCatalog();
+    }
     return true;
   }
 
   function setLanguage(language) {
-    if (!LANGUAGES.some(({ code }) => code === language)) {
+    if (!SELECTABLE_LANGUAGES.some(({ code }) => code === language)) {
       return;
     }
     voiceGeneration += 1;
@@ -1050,20 +1082,25 @@ export function createWorkoutController({
 
   function setVoiceEnabled(enabled) {
     const voiceEnabled = Boolean(enabled);
-    if (!voiceEnabled) {
+    const changed = voiceEnabled !== state.voiceEnabled;
+    if (changed) {
       voiceGeneration += 1;
       workoutSpeechQueue.cancel();
       voicePlayback?.stop?.();
     }
+    let voiceStatus = voiceEnabled
+      ? 'Automatic voice coaching is on.'
+      : 'Voice coaching is muted. Written feedback remains available.';
     try {
       coach.setEnabled(voiceEnabled);
+      voicePlayback?.setMuted?.(!voiceEnabled);
     } catch (error) {
-      update({ statusMessage: `${error.message} Written coaching is still available.` });
+      logVoiceError('Speech playback could not be updated.', error);
+      voiceStatus = VOICE_FAILURE_MESSAGE;
     }
-    voicePlayback?.setMuted?.(!voiceEnabled);
     persistVoicePreferences({ voiceEnabled });
-    update({ voiceStatus: voiceEnabled ? 'Voice coaching is on.' : 'Voice is off.' });
-    if (voiceEnabled) {
+    update({ voiceStatus });
+    if (voiceEnabled && (changed || !state.availableVoices.length)) {
       void refreshVoiceCatalog();
     }
   }
@@ -1081,13 +1118,9 @@ export function createWorkoutController({
     persistVoicePreferences({ voiceId: typeof voiceId === 'string' ? voiceId : '' });
   }
 
-  function setCountEachRep(enabled) {
-    persistVoicePreferences({ countEachRep: Boolean(enabled) });
-  }
-
   async function refreshVoiceCatalog() {
     if (!audioCoach?.listVoices) {
-      update({ voiceCatalogStatus: 'Voice catalogue is unavailable. Start the backend to enable YarnGPT.' });
+      update({ voiceCatalogStatus: 'Voice catalogue is temporarily unavailable. English speech uses your browser.' });
       return [];
     }
     if (voiceCatalogRequest) {
@@ -1115,7 +1148,8 @@ export function createWorkoutController({
         }
         return voices;
       } catch (error) {
-        update({ voiceCatalogStatus: `${error.message} Written coaching remains available.` });
+        logVoiceError('YarnGPT voice catalogue could not be loaded.', error);
+        update({ voiceCatalogStatus: 'Voice catalogue is temporarily unavailable. English speech uses your browser.' });
         return [];
       }
     })();
@@ -1144,7 +1178,10 @@ export function createWorkoutController({
     if (!state.availableVoices.length) {
       await refreshVoiceCatalog();
     }
-    if (expectedGeneration !== voiceGeneration || !state.voiceEnabled) {
+    if (
+      expectedGeneration !== voiceGeneration ||
+      !state.voiceEnabled
+    ) {
       return '';
     }
     return selectVoiceId(language);
@@ -1194,7 +1231,6 @@ export function createWorkoutController({
     setVoiceEnabled,
     setVoiceVolume,
     setVoiceId,
-    setCountEachRep,
     refreshVoiceCatalog,
     setPersonality,
     setGoal,
@@ -1206,7 +1242,7 @@ export function createWorkoutController({
 }
 
 function languageOptions(selectedLanguage) {
-  return LANGUAGES.map(
+  return SELECTABLE_LANGUAGES.map(
     ({ code, label }) =>
       `<option value="${code}"${code === selectedLanguage ? ' selected' : ''}>${label}</option>`,
   ).join('');
@@ -1414,7 +1450,7 @@ function renderHome(root, state) {
             </span>
             <span class="welcome__voice-copy">
               <span class="welcome__card-kicker">Voice coaching</span>
-              <strong>Your coach speaks your language.</strong>
+              <strong>English coaching, spoken in your browser.</strong>
             </span>
             <span class="welcome__sound-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
           </aside>
@@ -1425,11 +1461,8 @@ function renderHome(root, state) {
             <span class="welcome__rep-track" aria-hidden="true"><i></i></span>
             <span class="welcome__rep-note">A sample workout, not a live session</span>
           </aside>
-          <div class="welcome__language-chips" role="group" aria-label="Available coaching languages">
-            <span class="welcome__language-chip"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8v4h3l4 3V5L6 8H3Zm10-1a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" /></svg>Yoruba</span>
-            <span class="welcome__language-chip"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8v4h3l4 3V5L6 8H3Zm10-1a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" /></svg>Igbo</span>
-            <span class="welcome__language-chip"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8v4h3l4 3V5L6 8H3Zm10-1a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" /></svg>Hausa</span>
-            <span class="welcome__language-chip"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8v4h3l4 3V5L6 8H3Zm10-1a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" /></svg>Nigerian Pidgin</span>
+          <div class="welcome__language-chips" role="group" aria-label="Available coaching language">
+            <span class="welcome__language-chip"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8v4h3l4 3V5L6 8H3Zm10-1a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" /></svg>English</span>
           </div>
         </div>
       </section>
@@ -1601,21 +1634,21 @@ function renderWorkout(root, state) {
                 <span>Voice</span>
                 <select data-action="voice-id" aria-label="Choose a discovered voice" ${state.availableVoices.length ? '' : 'disabled'}>${voiceOptions(state)}</select>
               </label>
-              <label class="rep-count-toggle">
-                <input type="checkbox" data-action="count-each-rep" ${state.countEachRep ? 'checked' : ''} />
-                <span>Speak each rep</span>
-              </label>
             </div>
           </div>
           <p data-fullscreen-status role="status" aria-live="polite" hidden></p>
-          <p class="voice-status" data-voice-status role="status" aria-live="polite">${escapeHtml(state.voiceStatus)}</p>
-          <p class="voice-status" data-voice-catalog-status role="status" aria-live="polite">${escapeHtml(state.voiceCatalogStatus)}</p>
-          <div class="workout-controls" aria-label="Workout controls">
-            <button class="button button--primary" type="button" data-action="start">Start</button>
-            <button class="button button--quiet" type="button" data-action="pause">Pause</button>
-            <button class="button button--quiet" type="button" data-action="resume">Resume</button>
-            <button class="button button--quiet" type="button" data-action="reset">Reset</button>
-            <button class="button button--end" type="button" data-action="end">End workout</button>
+          <div class="workout-control-dock">
+            <div class="workout-control-messages">
+              <p class="voice-status" data-voice-status role="status" aria-live="polite">${escapeHtml(state.voiceStatus)}</p>
+              <p class="voice-status" data-voice-catalog-status role="status" aria-live="polite">${escapeHtml(state.voiceCatalogStatus)}</p>
+            </div>
+            <div class="workout-controls" aria-label="Workout controls">
+              <button class="button button--primary" type="button" data-action="start">Start</button>
+              <button class="button button--quiet" type="button" data-action="pause">Pause</button>
+              <button class="button button--quiet" type="button" data-action="resume">Resume</button>
+              <button class="button button--quiet" type="button" data-action="reset">Reset</button>
+              <button class="button button--end" type="button" data-action="end">End workout</button>
+            </div>
           </div>
           <p class="workout-status" data-workout-status role="status" aria-live="polite">${state.statusMessage}</p>
         </section>
@@ -1782,10 +1815,6 @@ function updateWorkout(root, state) {
   if (voiceVolume && Number(voiceVolume.value) !== state.voiceVolume) {
     voiceVolume.value = String(state.voiceVolume);
   }
-  const countEachRep = root.querySelector('[data-action="count-each-rep"]');
-  if (countEachRep) {
-    countEachRep.checked = state.countEachRep;
-  }
   const voiceStatus = root.querySelector('[data-voice-status]');
   if (voiceStatus && voiceStatus.textContent !== state.voiceStatus) {
     voiceStatus.textContent = state.voiceStatus;
@@ -1945,24 +1974,18 @@ export function mountApp(root, {
   }
 
   const coach = createSpeechCoach({
-    synthesis: globalThis.speechSynthesis ?? { speak() {}, cancel() {} },
-    Utterance: globalThis.SpeechSynthesisUtterance ?? class {
-      constructor(text) {
-        this.text = text;
-      }
-    },
-    onError: (error) => {
-      const status = root.querySelector('[data-workout-status]');
-      if (status) {
-        status.textContent = `${error.message} Written coaching is still available.`;
-      }
+    synthesis: globalThis.speechSynthesis,
+    Utterance: globalThis.SpeechSynthesisUtterance,
+    onError: () => {
+      const status = root.querySelector('[data-voice-status]');
+      if (status) status.textContent = VOICE_FAILURE_MESSAGE;
     },
   });
   const playbackManager = voicePlayback ?? createVoicePlaybackManager({
-    onError: (error) => {
+    onError: () => {
       const status = root.querySelector('[data-voice-status]');
       if (status) {
-        status.textContent = `${error.message} Written coaching remains available.`;
+        status.textContent = VOICE_FAILURE_MESSAGE;
       }
     },
   });
@@ -2073,8 +2096,7 @@ export function mountApp(root, {
       controller.setVoiceVolume(control.value);
     } else if (control.matches?.('[data-action="voice-id"]')) {
       controller.setVoiceId(control.value);
-    } else if (control.matches?.('[data-action="count-each-rep"]')) {
-      controller.setCountEachRep(control.checked);
+
     } else if (control.matches?.('[data-action="goal-custom"]')) {
       controller.setTargetFromCustom(control.value);
     }

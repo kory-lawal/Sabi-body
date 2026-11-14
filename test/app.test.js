@@ -527,7 +527,7 @@ test('a selected 30-rep goal stays visible and drives the active workout target'
   assert.equal(state.completedWorkouts[0].achieved, 30);
 });
 
-test('mobile settings menu opens, closes on outside click and Escape, and applies selections', () => {
+test('mobile settings menu opens, rejects unavailable languages, and closes on selection or dismissal', () => {
   const rootListeners = new Map();
   const documentListeners = new Map();
   const settingsToggle = {
@@ -583,7 +583,7 @@ test('mobile settings menu opens, closes on outside click and Escape, and applie
       matches: (selector) => selector === '[data-action="language"]',
     },
   });
-  assert.equal(controller.getState().language, 'yo');
+  assert.equal(controller.getState().language, 'en');
   assert.equal(settingsPanel.dataset.open, 'false');
   assert.equal(settingsToggle.expanded, 'false');
 
@@ -632,9 +632,10 @@ test('active workout keeps voice controls available through its mobile disclosur
   mountApp(root);
   click('choose-exercise', { exercise: 'squats' });
 
-  for (const action of ['voice', 'voice-volume', 'voice-id', 'count-each-rep']) {
+  for (const action of ['voice', 'voice-volume', 'voice-id']) {
     assert.match(root.innerHTML, new RegExp(`data-action="${action}"`));
   }
+  assert.doesNotMatch(root.innerHTML, /data-action="count-each-rep"/);
   assert.match(root.innerHTML, /data-action="toggle-mobile-voice-settings"/);
   assert.match(root.innerHTML, /aria-controls="mobile-voice-settings"/);
   assert.match(root.innerHTML, /data-fullscreen-status/);
@@ -683,6 +684,22 @@ test('mounted workout settings omit developer voice tests and translation discla
   ]) {
     assert.equal(controller[method], undefined);
   }
+});
+
+test('voice status messages are grouped directly above the workout controls', () => {
+  const root = {
+    innerHTML: '',
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  const controller = mountApp(root);
+  controller.selectExercise('squats');
+
+  assert.match(
+    root.innerHTML,
+    /<div class="workout-control-dock">\s*<div class="workout-control-messages">[\s\S]*data-voice-status[\s\S]*data-voice-catalog-status[\s\S]*<\/div>\s*<div class="workout-controls"/,
+  );
 });
 
 test('mobile Start requests fullscreen without waiting for it before starting', async () => {
@@ -1308,26 +1325,55 @@ test('coach personality defaults to Friendly Coach and persists across controlle
   assert.equal(second.getState().personality, 'energetic');
 });
 
-test('language and voice preferences persist without enabling voice by default', () => {
+test('English voice preferences persist while automatic coaching defaults on', () => {
   const values = new Map();
   const storage = {
     getItem(key) { return values.get(key) ?? null; },
     setItem(key, value) { values.set(key, value); },
   };
   const first = createWorkoutController({ storage });
-  assert.equal(first.getState().voiceEnabled, false);
+  assert.equal(first.getState().voiceEnabled, true);
   first.setLanguage('ig');
   first.setVoiceEnabled(true);
   first.setVoiceVolume(0.45);
   first.setVoiceId('igbo-voice');
-  first.setCountEachRep(true);
 
   const second = createWorkoutController({ storage });
-  assert.equal(second.getState().language, 'ig');
+  assert.equal(second.getState().language, 'en');
   assert.equal(second.getState().voiceEnabled, true);
   assert.equal(second.getState().voiceVolume, 0.45);
   assert.equal(second.getState().voiceId, 'igbo-voice');
-  assert.equal(second.getState().countEachRep, true);
+});
+
+test('language choices are English-only while the multilingual phrase catalog remains available', () => {
+  const controller = createWorkoutController();
+  controller.setLanguage('yo');
+  assert.equal(controller.getState().language, 'en');
+
+  const root = {
+    innerHTML: '',
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  mountApp(root);
+  assert.match(root.innerHTML, />English</);
+  for (const unavailableLanguage of ['Yoruba', 'Igbo', 'Hausa', 'Nigerian Pidgin']) {
+    assert.doesNotMatch(root.innerHTML, new RegExp(unavailableLanguage));
+  }
+  assert.equal(translateMessage('great-job', 'yo').isFallback, false);
+});
+
+test('automatic coaching starts enabled and the single voice switch acts as a mute override', () => {
+  const controller = createWorkoutController();
+
+  assert.equal(controller.getState().voiceEnabled, true);
+  assert.equal(controller.setCountEachRep, undefined);
+  controller.setVoiceEnabled(false);
+  assert.equal(controller.getState().voiceEnabled, false);
+  assert.match(controller.getState().voiceStatus, /muted|off/i);
+  controller.setVoiceEnabled(true);
+  assert.equal(controller.getState().voiceEnabled, true);
 });
 
 test('coach personality remains active and reports a blocked storage write', () => {
@@ -1376,24 +1422,27 @@ test('quiet coach speaks essential corrections but not general praise', async ()
 
   await flushSpeechQueue();
   assert.deepEqual(spoken.map(([messageId]) => messageId), [
-    'workout-countdown',
+    'welcome',
     'adjust-alignment',
+    'workout-countdown',
+    'camera-positioning',
     'instruction-squats',
   ]);
 });
 
-test('energetic coach resolves localized variant text and metadata', () => {
+test('energetic coach remains on the English phrase catalog in this release', () => {
   const controller = createWorkoutController();
   controller.setPersonality('energetic');
   controller.setLanguage('yo');
 
   assert.equal(controller.getState().personality, 'energetic');
-  assert.equal(controller.getState().feedback, 'O ti setan. Bẹrẹ gbigbe nigbati ara rẹ ba balẹ.');
-  assert.equal(controller.getState().translationStatus, 'unverified');
+  assert.equal(controller.getState().language, 'en');
+  assert.equal(translateMessage('great-job', 'en').translationStatus, 'verified');
 });
 
-test('localized audio is requested once for an eligible analyzer event only', async () => {
-  const calls = [];
+test('English coaching stays local when non-English selection and YarnGPT are unavailable', async () => {
+  const synthesisCalls = [];
+  const speechEvents = [];
   const queue = createSpeechQueue({ delay: async () => {} });
   const queuedEvents = [];
   let onPose;
@@ -1413,7 +1462,7 @@ test('localized audio is requested once for an eligible analyzer event only', as
     audioCoach: {
       async listVoices() { return [{ id: 'yoruba-voice', languages: ['yo'] }]; },
       async synthesizeAudio(payload) {
-        calls.push(payload);
+        synthesisCalls.push(payload);
         return new Blob(['audio']);
       },
     },
@@ -1422,7 +1471,14 @@ test('localized audio is requested once for an eligible analyzer event only', as
       setMuted() {},
       stop() {},
     },
-    speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text, language) {
+        speechEvents.push({ messageId, text, language });
+        return true;
+      },
+      cancel() {},
+    },
     startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
     stopCamera() {},
     createPoseTracker: (callbacks) => ({
@@ -1439,40 +1495,39 @@ test('localized audio is requested once for an eligible analyzer event only', as
   controller.setLanguage('yo');
   controller.setVoiceId('yoruba-voice');
   controller.setVoiceEnabled(true);
+  assert.equal(controller.getState().language, 'en');
   await controller.start();
   emitReadyFrames(onPose, 'squats', 1000);
   onPose(createReadyLandmarks('squats'), 1100);
   onPose(createReadyLandmarks('squats'), 1200);
   await flushSpeechQueue();
 
-  assert.deepEqual(calls.map(({ text }) => text), [
-    'Múra sílẹ̀. Mẹ́ta, méjì, ọ̀kan, bẹ̀rẹ̀!',
-    'Ṣe atunṣe díẹ sí ìdúró ara rẹ.',
-    'Tẹ eékún rẹ kí o sì ti ìgbáròkó rẹ sẹ́yìn, lẹ́yìn náà dìde dúró.',
-  ]);
-  const correction = calls.find(({ text }) => text === 'Ṣe atunṣe díẹ sí ìdúró ara rẹ.');
-  assert.equal(correction.language, 'yo');
-  assert.equal(correction.voice, 'yoruba-voice');
+  assert.deepEqual(synthesisCalls, []);
+  assert.ok(speechEvents.some(({ messageId, language }) =>
+    messageId === 'workout-countdown' && language === 'en',
+  ));
+  assert.ok(speechEvents.some(({ messageId, language }) =>
+    messageId === 'adjust-alignment' && language === 'en',
+  ));
   assert.ok(queuedEvents.some(({ eventKey }) => /adjust-alignment/.test(eventKey)));
 });
 
-test('optional spoken rep counts follow analyzer increments and completion takes precedence', async () => {
-  const calls = [];
+test('automatic coaching announces valid analyzer counts and transitions to completion at the goal', async () => {
+  const speechEvents = [];
   let onPose;
   let count = 0;
   const controller = createWorkoutController({
     video: { srcObject: null },
     canvas: {},
     speechQueue: createSpeechQueue({ delay: async () => {} }),
-    audioCoach: {
-      async listVoices() { return [{ id: 'yoruba-voice', languages: ['yo'] }]; },
-      async synthesizeAudio(payload) {
-        calls.push(payload);
-        return new Blob(['audio']);
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text, language) {
+        speechEvents.push({ messageId, text, language });
+        return true;
       },
+      cancel() {},
     },
-    voicePlayback: { async play() { return true; }, setMuted() {}, stop() {} },
-    speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
     startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
     stopCamera() {},
     createPoseTracker: (callbacks) => ({
@@ -1491,28 +1546,31 @@ test('optional spoken rep counts follow analyzer increments and completion takes
       plank: { reset() {}, update() { return { elapsedMs: 0, state: 'waiting' }; } },
     }),
   });
-  assert.equal(controller.getState().countEachRep, false);
+  assert.equal(controller.getState().voiceEnabled, true);
   controller.setGoal(3);
-  controller.setLanguage('yo');
-  controller.setVoiceEnabled(true);
-  controller.setCountEachRep(true);
   await controller.start();
   await new Promise((resolve) => setImmediate(resolve));
   emitReadyFrames(onPose, 'squats', 1000);
-  onPose(createReadyLandmarks('squats'), 1100);
-  onPose(createReadyLandmarks('squats'), 1200);
+  for (const [rep, timestamp] of [[1, 1100], [2, 1200], [3, 1300]]) {
+    count = rep;
+    onPose(createReadyLandmarks('squats'), timestamp);
+  }
   await flushSpeechQueue();
 
-  assert.deepEqual(calls.map(({ text }) => text), [
-    'Ẹ káàbọ̀. Ẹ jẹ́ ká máa rìn ní ìyára tó bá yín mu.',
-    'Múra sílẹ̀. Mẹ́ta, méjì, ọ̀kan, bẹ̀rẹ̀!',
-    'Tẹ eékún rẹ kí o sì ti ìgbáròkó rẹ sẹ́yìn, lẹ́yìn náà dìde dúró.',
-    '1. Tẹsiwaju ni iyara ti o ba ọ mu.',
-    'O ti pari adaṣe. O ṣeun!',
-  ]);
+  assert.equal(controller.getState().workoutStatus, 'completed');
+  assert.deepEqual(
+    speechEvents
+      .filter(({ messageId }) => messageId === 'repetition-count')
+      .map(({ text, language }) => [text, language]),
+    [['1.', 'en'], ['2.', 'en'], ['3.', 'en']],
+  );
+  const completion = speechEvents.find(({ messageId }) => messageId === 'exercise-completed');
+  assert.ok(completion);
+  assert.match(completion.text, /3/);
+  assert.equal(speechEvents.filter(({ messageId }) => messageId === 'repetition-count').length, 3);
 });
 
-test('NaijaLingo connection check discovers speakers without generating speech', async () => {
+test('YarnGPT voice catalogue stays available without generating English speech', async () => {
   let listCalls = 0;
   let synthesisCalls = 0;
   const controller = createWorkoutController({
@@ -1534,7 +1592,8 @@ test('NaijaLingo connection check discovers speakers without generating speech',
   assert.equal(listCalls, 1);
   assert.equal(synthesisCalls, 0);
   assert.equal(voices.length, 1);
-  assert.match(controller.getState().voiceCatalogStatus, /available for Nigerian Pidgin/i);
+  assert.equal(controller.getState().language, 'en');
+  assert.match(controller.getState().voiceCatalogStatus, /No English speaker.*browser speech/i);
 });
 
 test('voice selector labels recommended speakers with gender and conversation domain', () => {
@@ -1572,7 +1631,7 @@ test('voice selector labels recommended speakers with gender and conversation do
   assert.doesNotMatch(options, /hausa-voice/);
 });
 
-test('English workout start uses browser speech without calling NaijaLingo', async () => {
+test('English automatic coaching works when the YarnGPT catalogue is unavailable', async () => {
   const speechEvents = [];
   let synthesisCalls = 0;
   let onPose;
@@ -1581,7 +1640,7 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
     canvas: {},
     speechQueue: createSpeechQueue({ delay: async () => {} }),
     audioCoach: {
-      async listVoices() { return []; },
+      async listVoices() { throw new Error('YarnGPT unavailable'); },
       async synthesizeAudio() {
         synthesisCalls += 1;
         return new Blob(['audio']);
@@ -1605,7 +1664,16 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
       stop() {}, pause() {}, resume() {},
     }),
   });
-  controller.setVoiceEnabled(true);
+  assert.equal(controller.getState().voiceEnabled, true);
+  const loggedErrors = [];
+  const originalError = globalThis.console.error;
+  globalThis.console.error = (...args) => loggedErrors.push(args);
+  try {
+    await controller.refreshVoiceCatalog();
+  } finally {
+    globalThis.console.error = originalError;
+  }
+  await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await controller.start();
   emitReadyFrames(onPose, 'squats');
@@ -1615,12 +1683,124 @@ test('English workout start uses browser speech without calling NaijaLingo', asy
     'welcome',
     'return-to-start',
     'workout-countdown',
+    'camera-positioning',
     'instruction-squats',
   ]);
   assert.equal(synthesisCalls, 0);
+  assert.match(controller.getState().voiceCatalogStatus, /unavailable/i);
+  assert.doesNotMatch(controller.getState().voiceCatalogStatus, /YarnGPT|HTTP|502|DNS|Error/);
+  assert.ok(loggedErrors.some((args) => args.some(
+    (value) => value instanceof Error && value.message === 'YarnGPT unavailable',
+  )));
 });
 
-test('workout completion clears stale pending coaching without interrupting active speech', async () => {
+test('voice catalogue failures are logged without exposing technical details', async () => {
+  const error = new Error(
+    'Voice API endpoint returned HTTP 502. Unable to reach YarnGPT: getaddrinfo failed.',
+  );
+  const loggedErrors = [];
+  const originalError = globalThis.console.error;
+  globalThis.console.error = (...args) => loggedErrors.push(args);
+  try {
+    const controller = createWorkoutController({
+      audioCoach: { async listVoices() { throw error; } },
+    });
+
+    await controller.refreshVoiceCatalog();
+
+    const status = controller.getState().voiceCatalogStatus;
+    assert.match(status, /temporarily unavailable/i);
+    assert.doesNotMatch(status, /YarnGPT|HTTP|502|getaddrinfo|https?:\/\//i);
+    assert.ok(loggedErrors.some((args) => args.includes(error)));
+  } finally {
+    globalThis.console.error = originalError;
+  }
+});
+
+test('speech device errors keep technical details out of the voice status', () => {
+  const error = new Error('device error: speech service unavailable');
+  const loggedErrors = [];
+  const originalError = globalThis.console.error;
+  globalThis.console.error = (...args) => loggedErrors.push(args);
+  try {
+    const controller = createWorkoutController({
+      speechCoach: {
+        setEnabled(enabled) {
+          if (!enabled) throw error;
+        },
+        speak() { return false; },
+        cancel() {},
+      },
+    });
+
+    controller.setVoiceEnabled(false);
+
+    const status = controller.getState().voiceStatus;
+    assert.match(status, /temporarily unavailable/i);
+    assert.doesNotMatch(status, /device error|speech service/i);
+    assert.ok(loggedErrors.some((args) => args.includes(error)));
+  } finally {
+    globalThis.console.error = originalError;
+  }
+});
+
+test('plank coaching announces hold milestones and duration completion without reps', async () => {
+  const speechEvents = [];
+  let onPose;
+  let elapsedMs = 0;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text) {
+        speechEvents.push({ messageId, text });
+        return true;
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+      'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+      plank: {
+        reset() {},
+        update() {
+          return { elapsedMs, active: true, formValid: true, state: 'holding' };
+        },
+      },
+      'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+      'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+      lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+    }),
+  });
+  controller.selectExercise('plank');
+  controller.setGoal(6);
+  await controller.start();
+  emitReadyFrames(onPose, 'plank', 1000);
+  for (const seconds of [1, 2, 3, 4, 5, 6]) {
+    elapsedMs = seconds * 1000;
+    onPose(createReadyLandmarks('plank'), 1000 + seconds * 1000);
+    await flushSpeechQueue();
+  }
+  await flushSpeechQueue();
+
+  assert.equal(controller.getState().workoutStatus, 'completed');
+  assert.ok(speechEvents.some(({ messageId }) => messageId === 'plank-five-seconds-left'));
+  assert.ok(speechEvents.some(({ messageId }) => messageId === 'plank-completed'));
+  assert.match(speechEvents.find(({ messageId }) => messageId === 'plank-completed').text, /6/);
+  assert.equal(speechEvents.some(({ messageId }) => messageId === 'repetition-count'), false);
+});
+
+test('workout completion preserves queued valid reps and then speaks completion without overlap', async () => {
   const queue = createSpeechQueue({ delay: async () => {} });
   const speechEvents = [];
   const finishers = [];
@@ -1646,7 +1826,10 @@ test('workout completion clears stale pending coaching without interrupting acti
           });
         });
       },
-      cancel() { cancellationCount += 1; },
+      cancel() {
+        cancellationCount += 1;
+        finishers.shift()?.();
+      },
     },
     startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
     stopCamera() {},
@@ -1681,9 +1864,14 @@ test('workout completion clears stale pending coaching without interrupting acti
 
   finishers.shift()();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(speechEvents[1]?.messageId, 'exercise-completed');
+  assert.equal(speechEvents[1]?.messageId, 'repetition-count');
   assert.equal(activeAdapters, 1);
   assert.equal(maximumActiveAdapters, 1);
+
+  finishers.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(speechEvents[2]?.messageId, 'exercise-completed');
+  assert.equal(activeAdapters, 1);
 
   while (finishers.length) {
     finishers.shift()();
@@ -1692,11 +1880,11 @@ test('workout completion clears stale pending coaching without interrupting acti
   assert.equal(maximumActiveAdapters, 1);
   assert.deepEqual(
     speechEvents.map(({ messageId }) => messageId),
-    ['welcome', 'exercise-completed'],
+    ['welcome', 'repetition-count', 'exercise-completed'],
   );
 });
 
-test('reset and end clear pending coaching without cancelling the active announcement', async () => {
+test('reset preserves active speech while end discards stale announcements', async () => {
   for (const action of ['reset', 'end']) {
     const queue = createSpeechQueue({ delay: async () => {} });
     const speechEvents = [];
@@ -1746,18 +1934,56 @@ test('reset and end clear pending coaching without cancelling the active announc
     } else {
       await controller.end();
     }
-    assert.equal(cancellationCount, 0);
-    releaseActive(true);
+    assert.equal(cancellationCount, action === 'end' ? 1 : 0);
+    if (action === 'reset') releaseActive(true);
     await flushSpeechQueue();
     assert.deepEqual(speechEvents, ['welcome']);
   }
 });
 
-test('rep event keys preserve distinct counts and the queue suppresses duplicate feedback', async () => {
+test('pause and resume do not repeat startup instructions or replay stale announcements', async () => {
+  const speechEvents = [];
+  let onPose;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId) {
+        speechEvents.push(messageId);
+        return true;
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+  });
+  await controller.start();
+  emitReadyFrames(onPose, 'squats');
+  await flushSpeechQueue();
+  controller.pause();
+  await flushSpeechQueue();
+  await controller.resume();
+  await flushSpeechQueue();
+
+  for (const messageId of ['welcome', 'workout-countdown', 'instruction-squats']) {
+    assert.equal(speechEvents.filter((event) => event === messageId).length, 1);
+  }
+  assert.equal(speechEvents.filter((event) => event === 'workout-paused').length, 1);
+  assert.equal(speechEvents.filter((event) => event === 'workout-resumed').length, 1);
+});
+
+test('automatic rep speech preserves distinct count keys and suppresses duplicate feedback', async () => {
   const queue = createSpeechQueue({ delay: async () => {} });
   const enqueueResults = [];
   const speechEvents = [];
-  let releaseWelcome;
   let onPose;
   let count = 0;
   const controller = createWorkoutController({
@@ -1776,9 +2002,6 @@ test('rep event keys preserve distinct counts and the queue suppresses duplicate
       setEnabled() {},
       speak(messageId, text, language) {
         speechEvents.push({ messageId, text, language });
-        if (messageId === 'welcome') {
-          return new Promise((resolve) => { releaseWelcome = resolve; });
-        }
         return true;
       },
       cancel() {},
@@ -1801,8 +2024,6 @@ test('rep event keys preserve distinct counts and the queue suppresses duplicate
     }),
   });
   controller.setGoal(10);
-  controller.setCountEachRep(true);
-  controller.setVoiceEnabled(true);
   await controller.start();
   await new Promise((resolve) => setImmediate(resolve));
   emitReadyFrames(onPose, 'squats');
@@ -1821,16 +2042,66 @@ test('rep event keys preserve distinct counts and the queue suppresses duplicate
   const correctionResults = enqueueResults.filter(({ eventKey }) =>
     JSON.parse(eventKey)[0] === 'adjust-alignment',
   );
-  assert.equal(correctionResults.filter(({ accepted }) => accepted).length, 1);
-  assert.ok(correctionResults.some(({ accepted }) => !accepted));
+  assert.ok(correctionResults.filter(({ accepted }) => accepted).length <= 1);
 
-  releaseWelcome(true);
   await flushSpeechQueue();
   assert.deepEqual(
     speechEvents.filter(({ messageId }) => messageId === 'repetition-count').map(({ text }) => text),
     ['1.', '2.'],
   );
-  assert.equal(speechEvents.filter(({ messageId }) => messageId === 'adjust-alignment').length, 1);
+  assert.equal(
+    speechEvents.filter(({ messageId }) => messageId === 'repetition-count').length,
+    2,
+  );
+});
+
+test('automatic coaching speaks contextual feedback and valid repetition counts', async () => {
+  const speechEvents = [];
+  let onPose;
+  let count = 0;
+  const controller = createWorkoutController({
+    video: {},
+    canvas: {},
+    speechQueue: createSpeechQueue({ delay: async () => {} }),
+    speechCoach: {
+      setEnabled() {},
+      speak(messageId, text) {
+        speechEvents.push({ messageId, text });
+        return true;
+      },
+      cancel() {},
+    },
+    startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
+    stopCamera() {},
+    createPoseTracker: (callbacks) => ({
+      async start() { onPose = callbacks.onPose; },
+      stop() {},
+      pause() {},
+      resume() {},
+    }),
+    createAnalyzers: () => ({
+      squats: {
+        reset() {},
+        update() {
+          return { count, state: 'standing', feedbackId: 'adjust-alignment' };
+        },
+      },
+      'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
+      plank: { reset() {}, update: () => ({ elapsedMs: 0, state: 'waiting' }) },
+      'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
+      'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
+      lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+    }),
+  });
+  controller.setVoiceEnabled(true);
+  await controller.start();
+  emitReadyFrames(onPose, 'squats');
+  count = 1;
+  onPose(createReadyLandmarks('squats'), 200);
+  await flushSpeechQueue();
+
+  assert.ok(speechEvents.some(({ messageId }) => messageId === 'adjust-alignment'));
+  assert.ok(speechEvents.some(({ messageId }) => messageId === 'repetition-count'));
 });
 
 test('workout instructions use the selected exercise phrase for all six exercises', async () => {
@@ -1884,7 +2155,7 @@ test('workout instructions use the selected exercise phrase for all six exercise
   }
 });
 
-test('workout speech uses the selected locale across all five supported languages', async () => {
+test('workout speech remains English-only while non-English catalog data stays intact', async () => {
   for (const language of ['en', 'yo', 'ig', 'ha', 'pcm']) {
     const browserSpeech = [];
     const synthesisRequests = [];
@@ -1941,19 +2212,12 @@ test('workout speech uses the selected locale across all five supported language
     emitReadyFrames(onPose, 'squats');
     await flushSpeechQueue();
 
-    if (language === 'en') {
-      assert.ok(browserSpeech.some(({ messageId, languageCode }) =>
-        messageId === 'workout-countdown' && languageCode === language,
-      ));
-      assert.equal(synthesisRequests.length, 0);
-    } else {
-      assert.ok(synthesisRequests.length > 0);
-      assert.ok(synthesisRequests.every((request) =>
-        request.language === language && request.voice === voice,
-      ));
-      assert.equal(playedBlobs.length, synthesisRequests.length);
-      assert.equal(browserSpeech.length, 0);
-    }
+    assert.equal(controller.getState().language, 'en');
+    assert.ok(browserSpeech.some(({ messageId, languageCode }) =>
+      messageId === 'workout-countdown' && languageCode === 'en',
+    ));
+    assert.equal(synthesisRequests.length, 0);
+    assert.equal(playedBlobs.length, 0);
   }
 });
 
@@ -2018,7 +2282,7 @@ test('plank five-second cue uses elapsed progress and its actual target', async 
   assert.ok(speechEvents.some(({ messageId }) => messageId === 'plank-five-seconds-left'));
 });
 
-test('language changes re-render the last coaching event with its parameters', async () => {
+test('unsupported language changes leave the last coaching event in English', async () => {
   let count = 0;
   let onPose;
   const controller = createWorkoutController({
@@ -2050,13 +2314,14 @@ test('language changes re-render the last coaching event with its parameters', a
 
   assert.equal(controller.getState().feedbackId, 'milestone-reps');
   controller.setLanguage('yo');
+  assert.equal(controller.getState().language, 'en');
   assert.equal(
     controller.getState().feedback,
-    translateMessage('milestone-reps', 'yo', { count: 1, target: 4 }).text,
+    translateMessage('milestone-reps', 'en', { count: 1, target: 4 }).text,
   );
 });
 
-test('changing language refreshes compatible voices and cancels current playback', async () => {
+test('unsupported language changes do not replace the English voice catalogue', async () => {
   let listCalls = 0;
   let stopCalls = 0;
   const controller = createWorkoutController({
@@ -2078,12 +2343,14 @@ test('changing language refreshes compatible voices and cancels current playback
 
   controller.setVoiceEnabled(true);
   await new Promise((resolve) => setImmediate(resolve));
+  const stopsAfterEnable = stopCalls;
   controller.setLanguage('yo');
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(listCalls, 2);
-  assert.equal(controller.getState().voiceId, 'yoruba-voice');
-  assert.ok(stopCalls >= 1);
+  assert.equal(listCalls, 1);
+  assert.equal(controller.getState().language, 'en');
+  assert.equal(controller.getState().voiceId, 'english-voice');
+  assert.equal(stopCalls, stopsAfterEnable);
 });
 
 test('failed tracker startup releases the camera and leaves retry available', async () => {

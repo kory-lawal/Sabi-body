@@ -124,13 +124,13 @@ frames in the browser for local pose inference; it does not upload, record, or
 store camera footage. It does not request microphone access. Ending the workout
 stops the camera tracks, clears the preview, and stops the pose tracker.
 
-The browser requests the MediaPipe WASM/model assets and web fonts. When
-optional spoken coaching is enabled, it sends allowlisted coaching event IDs
-and selected voice preferences to the same-origin backend. The backend resolves
-the message and calls the configured YarnGPT TTS API with the actual coaching
-text and selected voice. Camera frames, pose landmarks, and microphone audio
-are not sent to YarnGPT. Synthesis may spend account credits. The app has no
-account or workout-history storage.
+The browser requests the MediaPipe WASM/model assets and web fonts. English
+coaching text is read from the local phrase catalog, and spoken English uses
+the browser's speech synthesis; coaching text is not sent to ChatGPT or
+YarnGPT. The app may load the existing YarnGPT voice catalogue, but English
+speech does not depend on that service being available. Camera frames, pose
+landmarks, and microphone audio are not sent to YarnGPT. The app has no account
+or workout-history storage.
 
 ## Accessibility and camera setup
 
@@ -149,8 +149,8 @@ hip, and ankle visible. Camera access can be blocked by browser/site settings,
 another app using the camera, missing hardware, or a non-secure origin. Use
 `localhost` while developing or serve the app over HTTPS, grant access in the
 browser prompt, and use the displayed retry guidance if startup fails. Spoken
-feedback uses the browser's speech-synthesis support when available and is
-off by default.
+feedback uses browser speech synthesis when available and starts enabled; the
+Voice coaching setting can mute it.
 
 First-time users should check real-camera behavior on their own supported
 browser and device. The app requests camera permission only after **Start**;
@@ -158,19 +158,21 @@ automated tests use test doubles and do not replace this real-camera check.
 
 ## Languages and speech
 
-The language menu offers **English**, **Yoruba**, **Igbo**, **Hausa**, and
-**Nigerian Pidgin**. The categorized phrase catalog includes non-English
-translations that have not received native-speaker verification. YarnGPT audio
-uses only voices discovered from the provider catalogue and declared compatible
-with the selected language. Pidgin uses authored text and is synthesized as
-written unless a separate translation workflow is intentionally configured.
-English uses browser speech when selected. Speech is optional and off by
-default.
+This release exposes **English** as the only selectable coaching language.
+The other translations, language metadata, and YarnGPT backend support remain
+in the codebase for possible future reactivation. English messages and exercise
+instructions come from the local phrase catalog, and automatic English speech
+uses the browser's speech synthesis; neither ChatGPT nor a working YarnGPT
+connection is required. The app may still load the existing YarnGPT voice
+catalogue, but English coaching text is not sent for YarnGPT synthesis.
 
-The voice menu loads the catalogue returned by YarnGPT and filters it to
-compatible voices for the selected language. Any returned voice with matching
-language metadata remains selectable for the user after it is validated by the
-provider catalogue.
+Spoken coaching starts automatically when a workout begins. It gives the
+exercise instructions, announces each analyzer-confirmed repetition, and
+celebrates completion with the achieved total and a suggested rest. Planks use
+time-based holding guidance and completion instead of repetition counts. The
+single **Voice coaching** setting is an optional mute override; written
+feedback remains available when muted or when browser speech is unavailable.
+English speech uses the browser and does not depend on ChatGPT or YarnGPT.
 
 ## Adding an exercise
 

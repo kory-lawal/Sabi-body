@@ -32,6 +32,9 @@ export function createSpeechCoach({
 
   function cancel() {
     settleActiveSpeech(false);
+    if (typeof synthesis?.cancel !== 'function') {
+      return;
+    }
     try {
       synthesis.cancel();
     } catch (error) {
@@ -50,6 +53,9 @@ export function createSpeechCoach({
 
   function speak(messageId, text, languageCode) {
     if (!enabled || languageCode !== 'en') {
+      return Promise.resolve(false);
+    }
+    if (typeof synthesis?.speak !== 'function' || typeof Utterance !== 'function') {
       return Promise.resolve(false);
     }
 

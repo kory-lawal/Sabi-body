@@ -97,7 +97,7 @@ export function createSpeechQueue({
     }
   }
 
-  function enqueue({ eventKey, priority = 0, play, cancel } = {}) {
+  function enqueue({ eventKey, priority = 0, play, cancel, category = 'coaching' } = {}) {
     if (hasKey(eventKey)) {
       const timestamp = now();
       discardExpiredKeys(timestamp);
@@ -115,6 +115,7 @@ export function createSpeechQueue({
     waiting.push({
       eventKey,
       priority,
+      category,
       play,
       cancel,
       sequence: nextSequence++,
@@ -123,11 +124,16 @@ export function createSpeechQueue({
     return true;
   }
 
-  function clearPending() {
+  function clearPending({ preserve } = {}) {
+    const retained = [];
     for (const item of waiting) {
-      if (hasKey(item.eventKey)) pendingKeys.delete(item.eventKey);
+      if (typeof preserve === 'function' && preserve(item)) {
+        retained.push(item);
+      } else if (hasKey(item.eventKey)) {
+        pendingKeys.delete(item.eventKey);
+      }
     }
-    waiting = [];
+    waiting = retained;
   }
 
   function cancel() {

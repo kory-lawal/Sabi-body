@@ -139,6 +139,34 @@ test('clearPending discards waiting items without interrupting active speech', a
   assert.deepEqual(starts, ['active']);
 });
 
+test('clearPending can preserve queued repetition announcements for completion', async () => {
+  let finishActive;
+  const starts = [];
+  const queue = createSpeechQueue({ delay: async () => {} });
+  queue.enqueue({
+    category: 'coaching',
+    eventKey: 'active-coaching',
+    play: () => new Promise((resolve) => { finishActive = resolve; }),
+  });
+  queue.enqueue({
+    category: 'repetition',
+    eventKey: 'rep-1',
+    play: () => { starts.push('rep-1'); },
+  });
+  queue.enqueue({
+    category: 'coaching',
+    eventKey: 'stale-feedback',
+    play: () => { starts.push('stale-feedback'); },
+  });
+  await nextTurn();
+
+  queue.clearPending({ preserve: ({ category }) => category === 'repetition' });
+  finishActive();
+  await nextTurn();
+
+  assert.deepEqual(starts, ['rep-1']);
+});
+
 test('cancel clears pending items, calls active cancellation, and ignores late playback rejection', async () => {
   let rejectOldPlayback;
   let cancellationCount = 0;
