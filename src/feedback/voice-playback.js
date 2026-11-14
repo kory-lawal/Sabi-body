@@ -2,133 +2,137 @@ export function createVoicePlaybackManager({
   audioFactory = () => new Audio(),
   URLApi = globalThis.URL,
   onError = () => {},
-  now = () => Date.now(),
-  cooldownMs = 4500,
 } = {}) {
   let audio = null;
-  let audioUrl = null;
+  let activePlayback = null;
   let volume = 1;
   let muted = false;
-  let currentPriority = -Infinity;
-  let generation = 0;
-  let currentEventKey = null;
-  const lastPlayedByEvent = new Map();
-  const pendingByEvent = new Map();
 
-  function releaseCurrent() {
-    if (
-      currentEventKey &&
-      pendingByEvent.get(currentEventKey) === generation
-    ) {
-      pendingByEvent.delete(currentEventKey);
+  function reportError(error) {
+    try {
+      onError(error);
+    } catch {
+      // Error reporting must not replace the playback error.
     }
-    currentEventKey = null;
-    generation += 1;
-    if (audio) {
-      audio.onended = null;
-      audio.onerror = null;
+  }
+
+  function releasePlayback(playback, result, error) {
+    if (!playback || activePlayback !== playback) {
+      return;
+    }
+
+    activePlayback = null;
+    audio = null;
+    playback.audio.onended = null;
+    playback.audio.onerror = null;
+    try {
+      playback.audio.pause();
+      playback.audio.currentTime = 0;
+      playback.audio.removeAttribute?.('src');
+      playback.audio.load?.();
+    } catch {
+      // Releasing the object URL still lets the browser collect the audio.
+    }
+    if (playback.url) {
       try {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.removeAttribute?.('src');
-        audio.load?.();
+        URLApi.revokeObjectURL(playback.url);
       } catch {
-        // Releasing the object URL still lets the browser collect the audio.
+        // A revocation failure must not leave the active playback promise pending.
       }
-      audio = null;
     }
-    if (audioUrl) {
-      URLApi.revokeObjectURL(audioUrl);
-      audioUrl = null;
+
+    if (error) {
+      playback.reject(error);
+    } else {
+      playback.resolve(result);
     }
-    currentPriority = -Infinity;
   }
 
   function stop() {
-    releaseCurrent();
+    releasePlayback(activePlayback, false);
   }
 
-  async function play(blob, { priority = 0, eventKey, allowMuted = false, onEnded } = {}) {
+  function play(blob, { allowMuted = false, onEnded } = {}) {
     if (muted && !allowMuted) {
-      return false;
-    }
-    if (audio && priority < currentPriority) {
-      return false;
+      return Promise.resolve(false);
     }
 
-    const timestamp = now();
-    if (
-      eventKey &&
-      (pendingByEvent.has(eventKey) ||
-        timestamp - (lastPlayedByEvent.get(eventKey) ?? -Infinity) < cooldownMs)
-    ) {
-      return false;
-    }
-
-    releaseCurrent();
-    const playbackGeneration = generation;
-    currentEventKey = eventKey ?? null;
-    if (eventKey) {
-      pendingByEvent.set(eventKey, playbackGeneration);
-    }
     let nextAudio;
     let nextUrl;
     try {
       nextAudio = audioFactory();
       nextUrl = URLApi.createObjectURL(blob);
+      nextAudio.volume = volume;
+      nextAudio.playbackRate = 0.92;
+      for (const pitchProperty of [
+        'preservesPitch',
+        'webkitPreservesPitch',
+        'mozPreservesPitch',
+      ]) {
+        if (pitchProperty in nextAudio) {
+          nextAudio[pitchProperty] = true;
+        }
+      }
+      nextAudio.src = nextUrl;
     } catch (error) {
-      releaseCurrent();
-      onError(error);
-      throw error;
+      try {
+        nextAudio?.pause();
+        if (nextUrl) {
+          URLApi.revokeObjectURL(nextUrl);
+        }
+      } catch {
+        // Preparation errors are reported even if partial cleanup also fails.
+      }
+      const preparationError = new Error('Audio playback could not be prepared.', {
+        cause: error,
+      });
+      reportError(preparationError);
+      return Promise.reject(preparationError);
     }
     audio = nextAudio;
-    audioUrl = nextUrl;
-    currentPriority = priority;
-    nextAudio.volume = volume;
-    nextAudio.src = nextUrl;
-    nextAudio.onended = () => {
-      if (audio === nextAudio) {
-        releaseCurrent();
-      }
-      onEnded?.();
-    };
-    nextAudio.onerror = (event) => {
-      const error = new Error('Audio playback failed. Check browser audio permissions and try Test Voice.');
-      error.cause = event;
-      onError(error);
-      if (audio === nextAudio) {
-        releaseCurrent();
-      }
-    };
 
-    try {
-      await nextAudio.play();
-      if (generation !== playbackGeneration || audio !== nextAudio || (muted && !allowMuted)) {
-        try {
-          nextAudio.pause();
-          nextAudio.currentTime = 0;
-        } catch {
-          // A stale play promise must not restart speech after cancellation.
+    return new Promise((resolve, reject) => {
+      const playback = {
+        audio: nextAudio,
+        url: nextUrl,
+        resolve,
+        reject,
+      };
+      activePlayback = playback;
+
+      nextAudio.onended = () => {
+        releasePlayback(playback, true);
+        onEnded?.();
+      };
+      nextAudio.onerror = (event) => {
+        const error = new Error(
+          'Audio playback failed. Check browser audio permissions and try again.',
+          { cause: event },
+        );
+        releasePlayback(playback, false, error);
+        reportError(error);
+      };
+
+      function handlePlayFailure(cause) {
+        if (activePlayback !== playback) {
+          return;
         }
-        return false;
+        const error = cause?.name === 'NotAllowedError'
+          ? new Error(
+            'Audio playback was blocked by browser autoplay protection. Interact with the page and check browser audio permissions, then try again.',
+            { cause },
+          )
+          : new Error('Audio playback could not start.', { cause });
+        releasePlayback(playback, false, error);
+        reportError(error);
       }
-      if (eventKey) {
-        lastPlayedByEvent.set(eventKey, timestamp);
+
+      try {
+        Promise.resolve(nextAudio.play()).catch(handlePlayFailure);
+      } catch (error) {
+        handlePlayFailure(error);
       }
-      return true;
-    } catch (error) {
-      if (audio === nextAudio) {
-        releaseCurrent();
-      }
-      const playbackError = error?.name === 'NotAllowedError'
-        ? new Error(
-          'Audio playback was blocked by browser autoplay protection. Interact with the page and try Test Voice again.',
-          { cause: error },
-        )
-        : error;
-      onError(playbackError);
-      throw playbackError;
-    }
+    });
   }
 
   function setMuted(nextMuted) {

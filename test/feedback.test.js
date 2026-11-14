@@ -269,6 +269,9 @@ function createSpeechHarness() {
     constructor(text) {
       this.text = text;
       this.lang = '';
+      this.rate = 1;
+      this.onend = null;
+      this.onerror = null;
     }
   }
 
@@ -289,61 +292,69 @@ function createSpeechHarness() {
   };
 }
 
-test('enabled speech speaks one English utterance', () => {
+test('browser speech waits for completion and uses the configured language and rate', async () => {
   const harness = createSpeechHarness();
   const coach = createSpeechCoach(harness);
   coach.setEnabled(true);
 
   const result = coach.speak('great-job', 'Great work!', 'en');
 
-  assert.equal(result, true);
   assert.equal(harness.spoken.length, 1);
   assert.equal(harness.spoken[0].text, 'Great work!');
   assert.equal(harness.spoken[0].lang, 'en');
+  assert.equal(harness.spoken[0].rate, 0.92);
+  let settled = false;
+  result.then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  harness.spoken[0].onend();
+  assert.equal(await result, true);
 });
 
-test('speech cooldown prevents repeated utterances', () => {
-  const harness = createSpeechHarness();
-  let timestamp = 1000;
-  const coach = createSpeechCoach({
-    ...harness,
-    now: () => timestamp,
-    cooldownMs: 5000,
-  });
-  coach.setEnabled(true);
-
-  assert.equal(coach.speak('great-job', 'Great work!', 'en'), true);
-  timestamp += 4999;
-  assert.equal(coach.speak('great-job', 'Great work!', 'en'), false);
-  timestamp += 1;
-  assert.equal(coach.speak('great-job', 'Great work!', 'en'), true);
-  assert.equal(harness.spoken.length, 2);
-});
-
-test('speech does not speak fallback feedback in a non-English language', () => {
+test('browser speech has no adapter-level cooldown', async () => {
   const harness = createSpeechHarness();
   const coach = createSpeechCoach(harness);
   coach.setEnabled(true);
 
-  assert.equal(coach.speak('great-job', 'Great work!', 'yo'), false);
+  const first = coach.speak('great-job', 'Great work!', 'en');
+  harness.spoken[0].onend();
+  assert.equal(await first, true);
+
+  const second = coach.speak('great-job', 'Great work!', 'en');
+  assert.equal(harness.spoken.length, 2);
+  harness.spoken[1].onend();
+  assert.equal(await second, true);
+});
+
+test('speech does not speak fallback feedback in a non-English language', async () => {
+  const harness = createSpeechHarness();
+  const coach = createSpeechCoach(harness);
+  coach.setEnabled(true);
+
+  assert.equal(await coach.speak('great-job', 'Great work!', 'yo'), false);
   assert.equal(harness.spoken.length, 0);
 });
 
-test('disabling or cancelling speech cancels synthesis and disabled speech is ignored', () => {
+test('disabling or cancelling speech settles active speech as cancelled', async () => {
   const harness = createSpeechHarness();
   const coach = createSpeechCoach(harness);
   coach.setEnabled(true);
-  assert.equal(coach.speak('great-job', 'Great work!', 'en'), true);
+  const pending = coach.speak('great-job', 'Great work!', 'en');
 
   coach.setEnabled(false);
-  assert.equal(coach.speak('great-job', 'Great work!', 'en'), false);
+  assert.equal(await pending, false);
+  assert.equal(await coach.speak('great-job', 'Great work!', 'en'), false);
+  coach.setEnabled(true);
+  const cancelled = coach.speak('great-job', 'Again!', 'en');
   coach.cancel();
+  assert.equal(await cancelled, false);
 
   assert.equal(harness.synthesis.cancelCount, 2);
-  assert.equal(harness.spoken.length, 1);
+  assert.equal(harness.spoken.length, 2);
 });
 
-test('speech API failures are surfaced to the caller', () => {
+test('speech API failures are surfaced to the caller', async () => {
   const failure = new Error('speech is unavailable');
   const coach = createSpeechCoach({
     synthesis: {
@@ -360,12 +371,12 @@ test('speech API failures are surfaced to the caller', () => {
   });
   coach.setEnabled(true);
 
-  assert.throws(() => coach.speak('great-job', 'Great work!', 'en'), {
+  await assert.rejects(coach.speak('great-job', 'Great work!', 'en'), {
     cause: failure,
   });
 });
 
-test('asynchronous utterance errors are surfaced to the caller', () => {
+test('asynchronous utterance errors reject the active operation', async () => {
   const harness = createSpeechHarness();
   const errors = [];
   const coach = createSpeechCoach({
@@ -375,7 +386,7 @@ test('asynchronous utterance errors are surfaced to the caller', () => {
     },
   });
   coach.setEnabled(true);
-  coach.speak('great-job', 'Great work!', 'en');
+  const pending = coach.speak('great-job', 'Great work!', 'en');
 
   const event = { error: 'synthesis-failed' };
   harness.spoken[0].onerror(event);
@@ -383,6 +394,7 @@ test('asynchronous utterance errors are surfaced to the caller', () => {
   assert.equal(errors.length, 1);
   assert.match(errors[0].message, /speech synthesis failed/i);
   assert.equal(errors[0].cause, event);
+  await assert.rejects(pending, /speech synthesis failed/i);
 });
 
 test('voice client posts only the message ID and language to the endpoint', async () => {
