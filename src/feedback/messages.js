@@ -1,4 +1,10 @@
-import { translateCoachingMessage } from '../../api/src/shared/coaching-messages.js';
+import {
+  COACHING_PHRASES,
+  EXERCISE_INSTRUCTION_IDS,
+  translateCoachingMessage,
+} from '../../api/src/shared/coaching-messages.js';
+
+export { COACHING_PHRASES, EXERCISE_INSTRUCTION_IDS };
 
 export const LANGUAGES = [
   { code: 'en', label: 'English' },

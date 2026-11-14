@@ -1,11 +1,79 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { LANGUAGES, translateMessage } from '../src/feedback/messages.js';
+import {
+  COACHING_PHRASES,
+  EXERCISE_INSTRUCTION_IDS,
+  LANGUAGES,
+  translateMessage,
+} from '../src/feedback/messages.js';
+import { hasCoachingMessage } from '../api/src/shared/coaching-messages.js';
 import { createSpeechCoach } from '../src/feedback/speech.js';
 import { createVoiceClient } from '../src/services/voice-client.js';
 
 const EXPECTED_LANGUAGE_CODES = ['en', 'yo', 'ig', 'ha', 'pcm'];
+
+test('every categorized coaching phrase defines all supported locales without fallback', () => {
+  assert.deepEqual(Object.keys(COACHING_PHRASES).sort(), [
+    'camera-body-alignment',
+    'completion',
+    'motivation',
+    'plank',
+    'progress',
+    'workout-instructions',
+  ]);
+
+  for (const [category, phrases] of Object.entries(COACHING_PHRASES)) {
+    for (const [messageId, translations] of Object.entries(phrases)) {
+      assert.deepEqual(
+        Object.keys(translations).sort(),
+        [...EXPECTED_LANGUAGE_CODES].sort(),
+        `${category}/${messageId} must define all locales`,
+      );
+      for (const languageCode of EXPECTED_LANGUAGE_CODES) {
+        assert.ok(translations[languageCode].trim(), `${messageId}/${languageCode} must not be empty`);
+        assert.equal(
+          translateMessage(messageId, languageCode).isFallback,
+          false,
+          `${messageId}/${languageCode} must resolve locally`,
+        );
+      }
+    }
+  }
+});
+
+test('every supported exercise maps to a distinct localized workout instruction', () => {
+  const expectedExerciseIds = [
+    'squats',
+    'jumping-jacks',
+    'plank',
+    'push-ups',
+    'sit-ups',
+    'lunges',
+  ];
+  const instructionIds = Object.values(EXERCISE_INSTRUCTION_IDS);
+
+  assert.deepEqual(Object.keys(EXERCISE_INSTRUCTION_IDS).sort(), [...expectedExerciseIds].sort());
+  assert.equal(new Set(instructionIds).size, expectedExerciseIds.length);
+  for (const messageId of instructionIds) {
+    assert.ok(Object.hasOwn(COACHING_PHRASES['workout-instructions'], messageId));
+  }
+});
+
+test('coaching templates interpolate approved values and leave unapproved placeholders untouched', () => {
+  const result = translateMessage('progress-repetition-summary', 'en', {
+    count: 4,
+    remaining: 6,
+    target: 10,
+    unexpected: 'unapproved-value',
+  });
+
+  assert.match(result.text, /4/);
+  assert.match(result.text, /6/);
+  assert.match(result.text, /10/);
+  assert.doesNotMatch(result.text, /unapproved-value/);
+  assert.equal(result.isFallback, false);
+});
 
 test('LANGUAGES includes every supported language code', () => {
   assert.deepEqual(
@@ -68,13 +136,14 @@ test('coaching dictionary contains the required exercise and voice-test events i
   }
 });
 
-test('untranslated supported languages fall back to English', () => {
+test('known coaching phrases use their localized catalog entries', () => {
   const english = translateMessage('camera-error', 'en');
 
-  for (const languageCode of ['yo', 'ig', 'ha', 'pcm']) {
+  for (const languageCode of EXPECTED_LANGUAGE_CODES.slice(1)) {
     const result = translateMessage('camera-error', languageCode);
-    assert.equal(result.text, english.text);
-    assert.equal(result.isFallback, true);
+    assert.notEqual(result.text, english.text);
+    assert.equal(result.isFallback, false);
+    assert.equal(result.translationStatus, 'unverified');
   }
 });
 
@@ -118,15 +187,56 @@ test('all analyzer message identifiers have English text', () => {
   }
 });
 
-test('alternate-leg coaching is available in English and explicitly falls back elsewhere', () => {
+test('every existing analyzer and controller identifier resolves in every supported language', () => {
+  for (const messageId of [
+    'ready',
+    'body-not-visible',
+    'move-lower',
+    'return-to-start',
+    'great-job',
+    'keep-going',
+    'aligned',
+    'adjust-alignment',
+    'camera-error',
+    'exercise-completed',
+    'alternate-legs',
+    'squat-completed',
+    'jumping-jack-completed',
+    'jack-return-closed',
+    'plank-hold',
+    'plank-completed',
+    'squat-stand-up',
+    'repetition-count',
+    'milestone-reps',
+    'milestone-plank',
+  ]) {
+    assert.equal(hasCoachingMessage(messageId), true, `${messageId} must remain registered`);
+    for (const languageCode of EXPECTED_LANGUAGE_CODES) {
+      const result = translateMessage(messageId, languageCode, {
+        count: 3,
+        remaining: 5,
+        target: 10,
+      });
+      assert.equal(result.isFallback, false, `${messageId}/${languageCode} must be localized`);
+    }
+  }
+});
+
+test('hasCoachingMessage safely rejects unknown identifiers', () => {
+  assert.equal(hasCoachingMessage('not-a-real-message'), false);
+  assert.equal(hasCoachingMessage('toString'), false);
+});
+
+test('alternate-leg coaching is localized in every supported language', () => {
   const english = translateMessage('alternate-legs', 'en');
   assert.match(english.text, /opposite leg/i);
   assert.equal(english.isFallback, false);
 
   for (const languageCode of ['yo', 'ig', 'ha', 'pcm']) {
     const localized = translateMessage('alternate-legs', languageCode);
-    assert.equal(localized.text, english.text);
-    assert.equal(localized.isFallback, true);
+    assert.notEqual(localized.text, english.text);
+    assert.equal(localized.isFallback, false);
+    assert.equal(localized.translationStatus, 'unverified');
   }
 });
 
