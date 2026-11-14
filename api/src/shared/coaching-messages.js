@@ -65,13 +65,6 @@ export const COACHING_PHRASES = {
       'Gyara matsayinka har sai an ga jikinka gaba ɗaya.',
       'Adjust your position until camera fit see your whole body.',
     ),
-    'test-positioning': phrase(
-      'Stand a little farther back so your full body stays in view.',
-      'Padà sẹ́yìn díẹ̀ kí gbogbo ara rẹ lè wà nínú àwòrán.',
-      'Laghachi azụ ntakịrị ka igwefoto hụ ahụ gị dum.',
-      'Ja da baya kaɗan domin kyamara ta ga jikinka gaba ɗaya.',
-      'Move back small so camera fit see your whole body.',
-    ),
     'stand-straight': phrase(
       'Stand straight.',
       'Dúró ní gígùn.',
@@ -227,13 +220,6 @@ export const COACHING_PHRASES = {
       'Gaa n’ihu, kpọọ ikpere abụọ, mesịa laghachi n’ọnọdụ guzoro.',
       'Yi gaba, lanƙwasa gwiwoyi biyu, sannan ka koma tsaye.',
       'Step forward, bend both knees, then return to standing.',
-    ),
-    'test-count-sequence': phrase(
-      'One, two, three, four, five, six, seven, eight, nine, ten.',
-      'Ọ̀kan, méjì, mẹ́ta, mẹ́rin, márùn-ún, mẹ́fà, méje, mẹ́jọ, mẹ́sàn-án, mẹ́wàá.',
-      'Otu, abụọ, atọ, anọ, ise, isii, asaa, asatọ, itoolu, iri.',
-      'Ɗaya, biyu, uku, huɗu, biyar, shida, bakwai, takwas, tara, goma.',
-      'One, two, three, four, five, six, seven, eight, nine, ten.',
     ),
   },
   motivation: {
@@ -501,13 +487,6 @@ export const COACHING_PHRASES = {
       'Emechaala jumping jack. Ị mere nke ọma!',
       'An kammala jumping jack. Madalla!',
       'Jumping jack don finish. You do well!',
-    ),
-    'test-completion': phrase(
-      'Congratulations. You completed your workout. Well done!',
-      'Ẹ kú oríire. O ti parí eré rẹ. O ṣe dáadáa!',
-      'Ekele. Ị mechara mgbatị ahụ gị. Ị mere nke ọma!',
-      'Taya murna. Ka kammala motsa jikinka. Madalla!',
-      'Congratulations. You don finish your workout. Well done!',
     ),
     'workout-completed': phrase(
       'Workout complete.',

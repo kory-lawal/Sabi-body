@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createVoicePlaybackManager } from '../src/feedback/voice-playback.js';
-import { createBrowserAudioSample } from '../src/feedback/browser-audio-sample.js';
 
 function createAudioHarness({ playAudio } = {}) {
   const created = [];
@@ -154,26 +153,4 @@ test('audio element errors reject playback and release the object URL', async ()
   assert.equal(errors.length, 1);
   assert.equal(errors[0].cause, event);
   assert.deepEqual(harness.revoked, ['blob:audio-1']);
-});
-
-test('browser diagnostic sample is a valid non-empty local WAV tone', async () => {
-  const sample = createBrowserAudioSample();
-  const bytes = new DataView(await sample.arrayBuffer());
-
-  assert.equal(sample.type, 'audio/wav');
-  assert.ok(sample.size > 44);
-  assert.equal(String.fromCharCode(...new Uint8Array(bytes.buffer, 0, 4)), 'RIFF');
-  assert.equal(String.fromCharCode(...new Uint8Array(bytes.buffer, 8, 4)), 'WAVE');
-});
-
-test('explicit browser diagnostic can test playback while coaching is muted', async () => {
-  const harness = createAudioHarness();
-  const manager = createVoicePlaybackManager(harness);
-  manager.setMuted(true);
-
-  const pending = manager.play(new Blob(['diagnostic']), { allowMuted: true });
-  assert.equal(harness.created.length, 1);
-  assert.equal(harness.created[0].paused, false);
-  harness.created[0].onended();
-  assert.equal(await pending, true);
 });

@@ -52,8 +52,8 @@ export function createVoicePlaybackManager({
     releasePlayback(activePlayback, false);
   }
 
-  function play(blob, { allowMuted = false, onEnded } = {}) {
-    if (muted && !allowMuted) {
+  function play(blob, { onEnded } = {}) {
+    if (muted) {
       return Promise.resolve(false);
     }
 

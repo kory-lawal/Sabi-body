@@ -133,7 +133,7 @@ test('localized milestone messages interpolate only approved values', () => {
   assert.equal(result.translationStatus, 'unverified');
 });
 
-test('coaching dictionary contains the required exercise and voice-test events in every language', () => {
+test('coaching dictionary contains the required production events in every language', () => {
   for (const messageId of [
     'welcome',
     'camera-positioning',
@@ -144,9 +144,6 @@ test('coaching dictionary contains the required exercise and voice-test events i
     'final-repetition',
     'workout-paused',
     'workout-resumed',
-    'test-count-sequence',
-    'test-positioning',
-    'test-completion',
   ]) {
     for (const { code } of LANGUAGES) {
       const result = translateMessage(messageId, code, { count: 3, remaining: 5, target: 10 });

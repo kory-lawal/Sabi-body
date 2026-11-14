@@ -159,12 +159,13 @@ automated tests use test doubles and do not replace this real-camera check.
 ## Languages and speech
 
 The language menu offers **English**, **Yoruba**, **Igbo**, **Hausa**, and
-**Nigerian Pidgin**. Non-English starter messages are unverified drafts and are
-marked as such in the app. YarnGPT audio uses only voices discovered from the
-provider catalogue and declared compatible with the selected language. Pidgin
-uses authored text and is synthesized as written unless a separate translation
-workflow is intentionally configured. English uses browser speech when selected.
-Speech is optional and off by default.
+**Nigerian Pidgin**. The categorized phrase catalog includes non-English
+translations that have not received native-speaker verification. YarnGPT audio
+uses only voices discovered from the provider catalogue and declared compatible
+with the selected language. Pidgin uses authored text and is synthesized as
+written unless a separate translation workflow is intentionally configured.
+English uses browser speech when selected. Speech is optional and off by
+default.
 
 The voice menu loads the catalogue returned by YarnGPT and filters it to
 compatible voices for the selected language. Any returned voice with matching
@@ -226,8 +227,9 @@ local development without approval.
 
 ## Translation review
 
-Starter translations live in `api/src/shared/coaching-messages.js` and remain
-unverified until reviewed by fluent speakers. Update that shared catalog and
-its tests when correcting a phrase. A provider voice's language declaration
+Starter translations live in the categorized phrase catalog in
+`api/src/shared/coaching-messages.js`. Non-English phrases and synthesized
+audio have not received native-speaker verification. Update that shared catalog
+and its tests when correcting a phrase. A provider voice's language declaration
 is not pronunciation verification; test each language and obtain human review
 before claiming it works.

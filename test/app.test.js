@@ -644,6 +644,47 @@ test('active workout keeps voice controls available through its mobile disclosur
   assert.equal(voiceToggle.expanded, 'true');
 });
 
+test('mounted workout settings omit developer voice tests and translation disclaimer', () => {
+  const root = {
+    innerHTML: '',
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  const controller = mountApp(root);
+  controller.selectExercise('squats');
+
+  for (const action of ['language', 'personality', 'voice', 'voice-volume', 'voice-id']) {
+    assert.match(root.innerHTML, new RegExp(`data-action="${action}"`));
+  }
+  assert.match(root.innerHTML, /Coach style/);
+  assert.match(root.innerHTML, /Language/);
+  assert.match(root.innerHTML, /Voice coaching/);
+  assert.match(root.innerHTML, /Volume/);
+  assert.match(root.innerHTML, /aria-label="Choose a discovered voice"/);
+  assert.match(root.innerHTML, /data-voice-status/);
+  assert.match(root.innerHTML, /data-voice-catalog-status/);
+
+  const translationDisclaimer = [
+    'Translation is an unverified',
+    ' draft; review it with a fluent speaker.',
+  ].join('');
+  assert.doesNotMatch(root.innerHTML, new RegExp(translationDisclaimer));
+  assert.doesNotMatch(root.innerHTML, /<summary>[^<]*(?:test|pronunciation)/i);
+  assert.doesNotMatch(root.innerHTML, /data-action="(?:test|generate-test|play-test)-/);
+  assert.doesNotMatch(root.innerHTML, /fluent speaker/i);
+  assert.doesNotMatch(root.innerHTML, /data-translation-[\w-]+/);
+  assert.doesNotMatch(root.innerHTML, new RegExp(['data-voice-', 'test-status'].join('')));
+  for (const method of [
+    ['generateVoice', 'Test'].join(''),
+    ['playPreparedVoice', 'Test'].join(''),
+    ['playVoice', 'Test'].join(''),
+    ['playBrowserAudio', 'Test'].join(''),
+  ]) {
+    assert.equal(controller[method], undefined);
+  }
+});
+
 test('mobile Start requests fullscreen without waiting for it before starting', async () => {
   const listeners = new Map();
   const events = [];
@@ -1351,87 +1392,6 @@ test('energetic coach resolves localized variant text and metadata', () => {
   assert.equal(controller.getState().translationStatus, 'unverified');
 });
 
-for (const language of ['yo', 'ig', 'ha', 'pcm']) {
-  test(`short ${language} coaching audio includes an existing localized continuation`, async () => {
-    let request;
-    const voice = `${language}-voice`;
-    const controller = createWorkoutController({
-      storage: { getItem() { return null; }, setItem() {} },
-      audioCoach: {
-        async listVoices() {
-          return [{ id: voice, languages: [language], isDefault: true }];
-        },
-        async synthesizeAudio(payload) {
-          request = payload;
-          return new Blob(['audio'], { type: 'audio/mpeg' });
-        },
-      },
-      voicePlayback: { setMuted() {}, stop() {} },
-      speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
-    });
-
-    controller.setLanguage(language);
-    controller.setVoiceEnabled(true);
-    await controller.refreshVoiceCatalog();
-    assert.equal(await controller.generateVoiceTest('great-job'), true);
-
-    const greeting = translateMessage('great-job', language).text;
-    const continuation = translateMessage('keep-going', language).text;
-    assert.deepEqual(request, {
-      text: `${greeting} ${continuation}`,
-      language,
-      voice,
-    });
-    assert.ok(Array.from(request.text).length >= 20);
-    assert.match(controller.getState().voiceStatus, /Audio generated/);
-    assert.match(controller.getState().voiceStatus, new RegExp(voice));
-  });
-
-  test(`localized ${language} coaching waits for a compatible voice during first-use discovery`, async () => {
-    const synthesisRequests = [];
-    let resolveVoices;
-    const voiceId = `${language}-voice`;
-    const voicesPromise = new Promise((resolve) => {
-      resolveVoices = resolve;
-    });
-    const controller = createWorkoutController({
-      video: { srcObject: null },
-      canvas: {},
-      audioCoach: {
-        listVoices() { return voicesPromise; },
-        async synthesizeAudio(payload) {
-          synthesisRequests.push(payload);
-          return new Blob(['audio']);
-        },
-      },
-      voicePlayback: { async play() { return true; }, setMuted() {}, stop() {} },
-      speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
-      startCamera: async () => ({ getTracks: () => [], getVideoTracks: () => [] }),
-      stopCamera() {},
-      createPoseTracker: () => ({
-        async start() {},
-        stop() {},
-        pause() {},
-        resume() {},
-      }),
-    });
-    controller.setLanguage(language);
-    controller.setVoiceEnabled(true);
-    await controller.start();
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.equal(synthesisRequests.length, 0);
-
-    resolveVoices([{ id: voiceId, languages: [language], isDefault: true }]);
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.ok(synthesisRequests.length > 0);
-    assert.ok(synthesisRequests.every(({ language: code, voice }) =>
-      code === language && voice === voiceId,
-    ));
-  });
-}
-
 test('localized audio is requested once for an eligible analyzer event only', async () => {
   const calls = [];
   const queue = createSpeechQueue({ delay: async () => {} });
@@ -1553,107 +1513,6 @@ test('optional spoken rep counts follow analyzer increments and completion takes
   ]);
 });
 
-test('mounted app sends localized speech text to same-origin YarnGPT routes', async (t) => {
-  const requests = [];
-  const played = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options = {}) => {
-    requests.push({ url, options });
-    if (url === '/api/coach/voices') {
-      return new Response(JSON.stringify({
-        voices: [{ id: 'yoruba-voice', name: 'Yoruba Voice', languages: ['yo'] }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    return new Response(new Uint8Array([1, 2, 3]), {
-      status: 200,
-      headers: { 'Content-Type': 'audio/mpeg' },
-    });
-  };
-  t.after(() => { globalThis.fetch = originalFetch; });
-
-  const root = {
-    innerHTML: '',
-    addEventListener() {},
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
-  };
-  const controller = mountApp(root, {
-    voicePlayback: {
-      setMuted() {},
-      setVolume() {},
-      stop() {},
-      async play(blob, options) { played.push({ blob, options }); return true; },
-    },
-  });
-
-  controller.setLanguage('yo');
-  controller.setVoiceEnabled(true);
-  await new Promise((resolve) => setImmediate(resolve));
-  controller.setVoiceId('yoruba-voice');
-  await controller.playVoiceTest('great-job');
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(requests.map(({ url }) => url), [
-    '/api/coach/voices',
-    '/api/coach/audio',
-  ]);
-  assert.deepEqual(JSON.parse(requests[1].options.body), {
-    text: 'O ṣe dáadáa! Tẹsiwaju ni iyara ti o ba ọ mu.',
-    language: 'yo',
-    voice: 'yoruba-voice',
-  });
-  assert.equal(played.length, 1);
-  assert.equal(played[0].options.priority, 100);
-});
-
-test('Test Voice reports failure when browser playback does not begin', async () => {
-  const controller = createWorkoutController({
-    audioCoach: {
-      async listVoices() { return [{ id: 'pidgin-voice', languages: ['pcm'] }]; },
-      async synthesizeAudio() { return new Blob(['audio']); },
-    },
-    voicePlayback: {
-      setMuted() {},
-      setVolume() {},
-      async play() { return false; },
-    },
-    speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
-  });
-  controller.setLanguage('pcm');
-  controller.setVoiceEnabled(true);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const played = await controller.playVoiceTest('great-job');
-
-  assert.equal(played, false);
-  assert.match(controller.getState().voiceStatus, /playback failed|did not start|blocked/i);
-});
-
-test('browser audio diagnostic plays locally and does not request YarnGPT', async () => {
-  const playbackCalls = [];
-  const controller = createWorkoutController({
-    voicePlayback: {
-      setMuted() {},
-      setVolume() {},
-      async play(blob, options) {
-        playbackCalls.push({ blob, options });
-        return true;
-      },
-    },
-    audioCoach: {
-      async synthesizeAudio() { throw new Error('YarnGPT must not be called'); },
-    },
-  });
-
-  const result = await controller.playBrowserAudioTest();
-
-  assert.equal(result, true);
-  assert.equal(playbackCalls.length, 1);
-  assert.equal(playbackCalls[0].blob.type, 'audio/wav');
-  assert.equal(playbackCalls[0].options.allowMuted, true);
-  assert.match(controller.getState().voiceStatus, /local audio.*no YarnGPT request/i);
-});
-
 test('NaijaLingo connection check discovers speakers without generating speech', async () => {
   let listCalls = 0;
   let synthesisCalls = 0;
@@ -1700,128 +1559,18 @@ test('voice selector labels recommended speakers with gender and conversation do
         domain: 'Everyday Conversation',
         isRecommended: true,
       },
+      {
+        id: 'hausa-voice',
+        name: 'Hausa Voice',
+        languages: ['ha'],
+      },
     ],
   });
 
   assert.match(options, /Abimbola.*Female.*Everyday Conversation.*Recommended/i);
   assert.match(options, /Babatunde.*Male.*Everyday Conversation.*Recommended/i);
   assert.match(options, /value="abimbola_yo" selected/);
-});
-
-test('English Test Voice uses browser speech when NaijaLingo has no English speaker', async () => {
-  const spoken = [];
-  let synthesisCalls = 0;
-  const controller = createWorkoutController({
-    audioCoach: {
-      async listVoices() { return []; },
-      async synthesizeAudio() {
-        synthesisCalls += 1;
-        return new Blob(['audio']);
-      },
-    },
-    speechCoach: {
-      setEnabled() {},
-      speak(messageId, text, language) {
-        spoken.push({ messageId, text, language });
-        return true;
-      },
-      cancel() {},
-    },
-  });
-  controller.setVoiceEnabled(true);
-
-  const played = await controller.generateVoiceTest('great-job');
-
-  assert.equal(played, true);
-  assert.equal(synthesisCalls, 0);
-  assert.equal(spoken.length, 1);
-  assert.equal(spoken[0].language, 'en');
-  assert.match(controller.getState().voiceStatus, /browser speech/i);
-});
-
-test('English Play Test Voice does not require generated audio bytes', async () => {
-  const spoken = [];
-  const controller = createWorkoutController({
-    audioCoach: {
-      async listVoices() { return []; },
-      async synthesizeAudio() {
-        throw new Error('English should not use NaijaLingo');
-      },
-    },
-    speechCoach: {
-      setEnabled() {},
-      speak(messageId, text, language) {
-        spoken.push({ messageId, text, language });
-        return true;
-      },
-      cancel() {},
-    },
-  });
-  controller.setVoiceEnabled(true);
-
-  const played = await controller.playVoiceTest('great-job');
-
-  assert.equal(played, true);
-  assert.equal(spoken.length, 1);
-  assert.equal(spoken[0].language, 'en');
-});
-
-test('prepared Test Voice audio can be replayed without another synthesis call', async () => {
-  let synthesisCalls = 0;
-  const playbackCalls = [];
-  const controller = createWorkoutController({
-    audioCoach: {
-      async listVoices() { return [{ id: 'pidgin-voice', languages: ['pcm'] }]; },
-      async synthesizeAudio() {
-        synthesisCalls += 1;
-        return new Blob(['mp3-data'], { type: 'audio/mpeg' });
-      },
-    },
-    voicePlayback: {
-      setMuted() {},
-      setVolume() {},
-      async play(blob, options) {
-        playbackCalls.push({ blob, options });
-        return true;
-      },
-    },
-    speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
-  });
-  controller.setLanguage('pcm');
-  controller.setVoiceEnabled(true);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(await controller.generateVoiceTest('great-job'), true);
-  assert.equal(await controller.playPreparedVoiceTest(), true);
-  assert.equal(await controller.playPreparedVoiceTest(), true);
-  assert.equal(synthesisCalls, 1);
-  assert.equal(playbackCalls.length, 2);
-  assert.match(controller.getState().voiceStatus, /Playing|Completed/i);
-});
-
-test('Test Voice refuses to generate paid audio when volume is zero', async () => {
-  let synthesisCalls = 0;
-  const controller = createWorkoutController({
-    audioCoach: {
-      async listVoices() { return [{ id: 'pidgin-voice', languages: ['pcm'] }]; },
-      async synthesizeAudio() {
-        synthesisCalls += 1;
-        return new Blob(['audio']);
-      },
-    },
-    voicePlayback: { setMuted() {}, setVolume() {}, stop() {}, async play() { return true; } },
-    speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
-  });
-  controller.setLanguage('pcm');
-  controller.setVoiceVolume(0);
-  controller.setVoiceEnabled(true);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const played = await controller.playVoiceTest('great-job');
-
-  assert.equal(played, false);
-  assert.equal(synthesisCalls, 0);
-  assert.match(controller.getState().voiceStatus, /volume.*zero|increase.*volume/i);
+  assert.doesNotMatch(options, /hausa-voice/);
 });
 
 test('English workout start uses browser speech without calling NaijaLingo', async () => {

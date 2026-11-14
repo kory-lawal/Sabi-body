@@ -21,7 +21,6 @@ import {
 import { loadVoicePreferences, saveVoicePreferences } from '../feedback/preferences.js';
 import { createSpeechQueue } from '../feedback/speech-queue.js';
 import { createSpeechCoach } from '../feedback/speech.js';
-import { createBrowserAudioSample } from '../feedback/browser-audio-sample.js';
 import { createVoicePlaybackManager } from '../feedback/voice-playback.js';
 import {
   createPoseDiagnostics,
@@ -250,7 +249,6 @@ export function createWorkoutController({
   let lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
   let voiceGeneration = 0;
   let voiceCatalogRequest = null;
-  let preparedVoiceAudio = null;
   let interrupted = false;
   let completionHandled = false;
   let countdownAnnounced = false;
@@ -1026,7 +1024,6 @@ export function createWorkoutController({
     }
     voiceGeneration += 1;
     workoutSpeechQueue.cancel();
-    preparedVoiceAudio = null;
     voicePlayback?.stop?.();
     try {
       coach.cancel();
@@ -1080,7 +1077,6 @@ export function createWorkoutController({
   }
 
   function setVoiceId(voiceId) {
-    preparedVoiceAudio = null;
     persistVoicePreferences({ voiceId: typeof voiceId === 'string' ? voiceId : '' });
   }
 
@@ -1153,175 +1149,6 @@ export function createWorkoutController({
     return selectVoiceId(language);
   }
 
-  async function generateVoiceTest(messageId = 'test-positioning') {
-    if (!audioCoach?.synthesizeAudio) {
-      update({ voiceStatus: 'Failed: voice service is unavailable. Start the backend and configure its YarnGPT server key.' });
-      return false;
-    }
-    if (!state.voiceEnabled) {
-      update({ voiceStatus: 'Failed: turn on spoken coaching before testing audio.' });
-      return false;
-    }
-    if (state.voiceVolume <= 0) {
-      update({ voiceStatus: 'Failed: voice volume is zero. Increase the volume before testing.' });
-      return false;
-    }
-    if (state.language === 'en') {
-      try {
-        const spokenMessageId = getPersonalityMessageId(state.personality, messageId);
-        const translated = lookupMessage(spokenMessageId, state.language, {});
-        const started = coach.speak(spokenMessageId, translated.text, state.language);
-        if (started === false) {
-          update({ voiceStatus: 'Failed: browser speech did not start. Check browser audio support.' });
-          return false;
-        }
-        update({ voiceStatus: 'Playing English test with browser speech.' });
-        return true;
-      } catch (error) {
-        update({ voiceStatus: `Failed: ${error.message} Written coaching remains available.` });
-        return false;
-      }
-    }
-    if (!state.availableVoices.length) {
-      update({ voiceStatus: 'Connecting to the voice catalogue…' });
-      await refreshVoiceCatalog();
-    }
-    const compatible = state.availableVoices.filter((voice) => isVoiceCompatible(voice, state.language));
-    const voiceId = compatible.some(({ id }) => id === state.voiceId)
-      ? state.voiceId
-      : (compatible.find(({ isDefault }) => isDefault)?.id ?? compatible[0]?.id ?? '');
-    if (!voiceId) {
-      update({ voiceStatus: `Failed: no compatible voice is listed for ${state.language}. ${state.voiceCatalogStatus}` });
-      return false;
-    }
-    if (voiceId !== state.voiceId) {
-      setVoiceId(voiceId);
-    }
-    const requestGeneration = ++voiceGeneration;
-    const languageLabel = LANGUAGES.find(({ code }) => code === state.language)?.label ?? state.language;
-    update({ voiceStatus: `Requesting ${languageLabel} audio with ${voiceId}…` });
-    try {
-      const audio = await audioCoach.synthesizeAudio({
-        text: getYarnGptText(lookupMessage(
-          getPersonalityMessageId(state.personality, messageId),
-          state.language,
-          {},
-        ).text),
-        language: state.language,
-        voice: voiceId,
-      });
-      if (requestGeneration !== voiceGeneration || !state.voiceEnabled) {
-        return false;
-      }
-      preparedVoiceAudio = {
-        audio,
-        messageId,
-        language: state.language,
-        personality: state.personality,
-        voiceId,
-      };
-      update({
-        voiceStatus: `Audio generated for ${languageLabel} with ${voiceId} (${audio.type || 'unknown format'}, ${audio.size} bytes). Ready to play.`,
-      });
-      return true;
-    } catch (error) {
-      update({
-        voiceStatus: `Failed to generate ${languageLabel} audio with ${voiceId}: ${error.message} Written coaching remains available.`,
-      });
-      return false;
-    }
-  }
-
-  async function playPreparedVoiceTest() {
-    if (!preparedVoiceAudio) {
-      update({ voiceStatus: 'Failed: generate a test sample before playing it.' });
-      return false;
-    }
-    if (
-      preparedVoiceAudio.language !== state.language ||
-      preparedVoiceAudio.voiceId !== state.voiceId ||
-      preparedVoiceAudio.personality !== state.personality
-    ) {
-      preparedVoiceAudio = null;
-      update({ voiceStatus: 'Failed: the prepared sample is for a different language or voice. Generate it again.' });
-      return false;
-    }
-    if (!state.voiceEnabled) {
-      update({ voiceStatus: 'Failed: turn on spoken coaching before playing the sample.' });
-      return false;
-    }
-    if (state.voiceVolume <= 0) {
-      update({ voiceStatus: 'Failed: voice volume is zero. Increase the volume before testing.' });
-      return false;
-    }
-
-    const requestGeneration = ++voiceGeneration;
-    const languageLabel = LANGUAGES.find(({ code }) => code === state.language)?.label ?? state.language;
-    update({ voiceStatus: `Audio generated. Starting ${languageLabel} playback with ${preparedVoiceAudio.voiceId}…` });
-    try {
-      const playbackStarted = await voicePlayback?.play(preparedVoiceAudio.audio, {
-        priority: 100,
-        eventKey: `test:${state.language}:${state.voiceId}:${preparedVoiceAudio.messageId}`,
-        onEnded: () => {
-          if (requestGeneration === voiceGeneration) {
-            update({
-              voiceStatus: `Completed: ${languageLabel} audio from ${preparedVoiceAudio.voiceId} finished. Review pronunciation with a fluent speaker.`,
-            });
-          }
-        },
-      });
-      if (requestGeneration !== voiceGeneration || !state.voiceEnabled) {
-        return false;
-      }
-      if (!playbackStarted) {
-        update({
-          voiceStatus: `Playback failed for ${languageLabel} with ${preparedVoiceAudio.voiceId}. Check mute, volume, and browser audio permissions.`,
-        });
-        return false;
-      }
-      update({
-        voiceStatus: `Playing ${languageLabel} audio with ${preparedVoiceAudio.voiceId}. Please review pronunciation with a fluent speaker.`,
-      });
-      return true;
-    } catch (error) {
-      update({ voiceStatus: `Failed: ${error.message} Written coaching remains available.` });
-      return false;
-    }
-  }
-
-  async function playVoiceTest(messageId) {
-    const usesBrowserSpeech = state.language === 'en';
-    const generated = await generateVoiceTest(messageId);
-    if (!generated) {
-      return false;
-    }
-    return usesBrowserSpeech ? true : playPreparedVoiceTest();
-  }
-
-  async function playBrowserAudioTest() {
-    if (!voicePlayback?.play) {
-      update({ voiceStatus: 'Failed: browser audio playback is unavailable.' });
-      return false;
-    }
-
-    update({ voiceStatus: 'Testing local browser audio…' });
-    try {
-      const started = await voicePlayback.play(createBrowserAudioSample(), {
-        priority: 100,
-        allowMuted: true,
-      });
-      if (!started) {
-        update({ voiceStatus: 'Failed: browser audio playback did not start. Check browser audio permissions.' });
-        return false;
-      }
-      update({ voiceStatus: 'Local audio started; no YarnGPT request was made.' });
-      return true;
-    } catch (error) {
-      update({ voiceStatus: `Failed: ${error.message}` });
-      return false;
-    }
-  }
-
   function setPersonality(personality) {
     if (!COACH_PERSONALITIES.some(({ id }) => id === personality)) {
       return false;
@@ -1368,10 +1195,6 @@ export function createWorkoutController({
     setVoiceId,
     setCountEachRep,
     refreshVoiceCatalog,
-    generateVoiceTest,
-    playPreparedVoiceTest,
-    playVoiceTest,
-    playBrowserAudioTest,
     setPersonality,
     setGoal,
     setTargetFromCustom,
@@ -1446,29 +1269,6 @@ export function voiceOptions(state) {
     const label = details ? `${name} — ${details}` : name;
     return `<option value="${escapeHtml(id)}"${id === state.voiceId ? ' selected' : ''}>${escapeHtml(label)}</option>`;
   }).join('');
-}
-
-function voiceTestPanel() {
-  if (!import.meta.env?.DEV) {
-    return '';
-  }
-  return `
-    <details class="voice-test-panel">
-      <summary>Test voice and pronunciation</summary>
-      <div class="voice-test-panel__controls">
-        <button class="button button--quiet" type="button" data-action="test-browser-audio">Test Browser Audio</button>
-        <button class="button button--quiet" type="button" data-action="test-naijalingo-connection">Test YarnGPT Connection</button>
-        <button class="button button--quiet" type="button" data-action="generate-test-speech">Generate Test Speech</button>
-        <button class="button button--quiet" type="button" data-action="play-test-speech">Play Test Speech</button>
-        <button class="button button--quiet" type="button" data-action="test-voice" data-message="test-positioning">Test short sample</button>
-        <button class="button button--quiet" type="button" data-action="test-voice" data-message="test-count-sequence">Test count 1 to 10</button>
-        <button class="button button--quiet" type="button" data-action="test-voice" data-message="test-positioning">Test camera prompt</button>
-        <button class="button button--quiet" type="button" data-action="test-voice" data-message="test-completion">Test congratulations</button>
-      </div>
-      <p class="voice-test-status" data-voice-test-status role="status" aria-live="polite"></p>
-      <p class="voice-test-status" data-voice-catalog-status role="status" aria-live="polite"></p>
-      <p class="voice-test-status">Audio proves playback only; fluent-speaker review is still required for pronunciation.</p>
-    </details>`;
 }
 
 function goalOptions(exerciseId, selectedTarget) {
@@ -1777,7 +1577,6 @@ function renderWorkout(root, state) {
             <h2 class="coaching-card__eyebrow" id="coaching-title">Your coach</h2>
             <p class="coaching-message" data-feedback aria-live="polite">${state.feedback}</p>
             <p class="fallback-notice" data-fallback hidden>English text shown; translation unavailable.</p>
-            <p class="fallback-notice" data-translation-draft hidden>Translation is an unverified draft; review it with a fluent speaker.</p>
           </section>
           <button
             class="mobile-voice-settings-toggle"
@@ -1808,8 +1607,8 @@ function renderWorkout(root, state) {
             </div>
           </div>
           <p data-fullscreen-status role="status" aria-live="polite" hidden></p>
-          <p class="voice-test-status" data-voice-status role="status" aria-live="polite">${escapeHtml(state.voiceStatus)}</p>
-          ${voiceTestPanel()}
+          <p class="voice-status" data-voice-status role="status" aria-live="polite">${escapeHtml(state.voiceStatus)}</p>
+          <p class="voice-status" data-voice-catalog-status role="status" aria-live="polite">${escapeHtml(state.voiceCatalogStatus)}</p>
           <div class="workout-controls" aria-label="Workout controls">
             <button class="button button--primary" type="button" data-action="start">Start</button>
             <button class="button button--quiet" type="button" data-action="pause">Pause</button>
@@ -1882,11 +1681,6 @@ function updateWorkout(root, state) {
   if (fallback) {
     fallback.hidden = !state.isFallback;
   }
-  const translationDraft = root.querySelector('[data-translation-draft]');
-  if (translationDraft) {
-    translationDraft.hidden = state.translationStatus !== 'unverified';
-  }
-
   const person = root.querySelector('[data-person-status]');
   if (person) {
     person.classList.toggle('is-ready', state.personDetected);
@@ -1994,10 +1788,6 @@ function updateWorkout(root, state) {
   const voiceStatus = root.querySelector('[data-voice-status]');
   if (voiceStatus && voiceStatus.textContent !== state.voiceStatus) {
     voiceStatus.textContent = state.voiceStatus;
-  }
-  const voiceTestStatus = root.querySelector('[data-voice-test-status]');
-  if (voiceTestStatus && voiceTestStatus.textContent !== state.voiceStatus) {
-    voiceTestStatus.textContent = state.voiceStatus;
   }
   const voiceCatalogStatus = root.querySelector('[data-voice-catalog-status]');
   if (voiceCatalogStatus && voiceCatalogStatus.textContent !== state.voiceCatalogStatus) {
@@ -2263,21 +2053,6 @@ export function mountApp(root, {
         root.querySelector('#exercises-title')?.focus?.();
         break;
       }
-      case 'test-voice':
-        void controller.playVoiceTest(button.dataset.message);
-        break;
-      case 'test-browser-audio':
-        void controller.playBrowserAudioTest();
-        break;
-      case 'test-naijalingo-connection':
-        void controller.refreshVoiceCatalog();
-        break;
-      case 'generate-test-speech':
-        void controller.generateVoiceTest('test-positioning');
-        break;
-      case 'play-test-speech':
-        void controller.playPreparedVoiceTest();
-        break;
       default:
         break;
     }
