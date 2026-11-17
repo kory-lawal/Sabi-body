@@ -129,8 +129,58 @@ coaching text is read from the local phrase catalog, and spoken English uses
 the browser's speech synthesis; coaching text is not sent to ChatGPT or
 YarnGPT. The app may load the existing YarnGPT voice catalogue, but English
 speech does not depend on that service being available. Camera frames, pose
-landmarks, and microphone audio are not sent to YarnGPT. The app has no account
-or workout-history storage.
+landmarks, and microphone audio are not sent to YarnGPT. Guest workouts are not
+stored. When Supabase is configured and a user signs in, the app stores their
+profile, workout attempts (including incomplete attempts), and reminder
+preferences in their account. Camera footage and pose landmarks are never
+stored with that history.
+
+## Accounts and workout history
+
+Supabase account features are optional; guest workouts remain available without
+configuration. To enable accounts:
+
+This project is a Vite browser app, not a Next.js app. It uses the already
+installed `@supabase/supabase-js` browser client; Next.js-only
+`@supabase/ssr` helpers and middleware are not applicable here.
+
+1. Copy `.env.example` to `.env.local`.
+2. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the Supabase
+   project URL and **public publishable key**. These values are included in
+   the browser bundle. Never put a Supabase service-role key or other secret in
+   a `VITE_` variable. The previous `VITE_SUPABASE_ANON_KEY` name remains
+   supported for existing local setups. In production, set `VITE_FRONTEND_URL`
+   to the deployed frontend origin; local confirmation redirects use Vite's
+   current origin and do not require this variable.
+3. Review the complete repository script
+   [`supabase/migrations/20261117020000_create_sabibody_account_data.sql`](supabase/migrations/20261117020000_create_sabibody_account_data.sql)
+   and run it in the Supabase SQL Editor as the project owner. The migration is
+   only a local SQL file until the owner applies it; this repository does not
+   apply it to the remote project.
+4. Enable email/password authentication in Supabase Auth. Configure the
+   project's site URL and allowed redirect URLs for `http://localhost:5176/**`
+   and the deployed HTTPS origin (for example `https://your-domain.example/**`).
+   Set the production site URL to the deployed frontend origin. Keep the
+   confirmation email template pointed at Supabase's `{{ .ConfirmationURL }}`
+   so the configured redirect is honored.
+5. Restart the Vite development server or rebuild/redeploy after changing the
+   environment values.
+
+The script defines `profiles`, `workout_sessions`, and
+`reminder_preferences` for user-owned data, plus a private, empty `admin_users`
+table. It defines auth-user profile triggers, row-level security policies, and
+the `get_workout_summary()` RPC. After running the complete script, inspect
+table columns and constraints, triggers, grants, and policies in the project
+before enabling account features. If Supabase CLI migration history already
+marks this file as applied, editing the file does not make the CLI rerun it;
+use the SQL Editor to run this repeatable script. No admin is seeded; only a
+trusted project owner may assign an admin by adding one through the SQL Editor.
+
+The dashboard and history read actual rows belonging to the signed-in user.
+Supabase Auth persists the browser session and refreshes tokens; account pages
+wait for session restoration and are not shown to unauthenticated users.
+Completed and incomplete workout attempts are saved only for authenticated
+users. Logging out clears private account data from the interface.
 
 ## Accessibility and camera setup
 
