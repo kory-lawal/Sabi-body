@@ -2507,8 +2507,9 @@ test('Home navigation ends an active workout and releases its camera', async () 
   assert.equal(harness.trackers[0].stopCalls, 1);
 });
 
-test('Vite proxies only backend coaching routes, not shared frontend source imports', () => {
-  assert.deepEqual(Object.keys(viteConfig.server.proxy), ['/api/coach']);
+test('Vite proxies auth and coaching routes, not shared frontend source imports', () => {
+  assert.deepEqual(Object.keys(viteConfig.server.proxy), ['/api/auth', '/api/coach']);
+  assert.equal(viteConfig.server.proxy['/api/auth'].target, 'http://127.0.0.1:8000');
   assert.equal(viteConfig.server.proxy['/api/coach'].target, 'http://127.0.0.1:8000');
 });
 
