@@ -21,6 +21,12 @@ class Settings:
         ).split(",")
         if origin.strip()
     ]
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL", "").strip() or (
+        f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        if SUPABASE_URL
+        else ""
+    )
     DEBUG = os.getenv("PYTHON_ENV", "development").lower() != "production"
 
 
