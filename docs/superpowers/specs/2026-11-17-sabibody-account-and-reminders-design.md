@@ -64,19 +64,21 @@ Create a SQL migration for:
   signup metadata and keeps its email synchronized. Users may update their
   own name; email changes go through Supabase Auth.
 - `workout_sessions`: UUID primary key, user ID, exercise name/type,
-  completed and target repetitions, duration in seconds, completion state,
-  start/end/completion timestamps, and a client-generated workout session key
-  unique per user. Repetition-specific values may be null for timed Planks.
-  The unique session key makes retries idempotent.
+  completed and target repetitions, actual and target duration in seconds,
+  completion state, start/end/completion timestamps, and a client-generated
+  workout session key unique per user. Repetition-specific values are null for
+  timed Planks, which store their goal in `target_duration_seconds`. The unique
+  session key makes retries idempotent.
 - `reminder_preferences`: UUID primary key, user ID, global email reminder
   switch, independent morning/evening switches and local times, selected IANA
   timezone, and created/updated timestamps.
 
 Use foreign keys with user deletion cascading, checks for supported exercise
 types, nonnegative quantities, valid times, and indexes for per-user date and
-completion queries. Enable RLS on every user-related table. Policies must
-scope reads and writes to `auth.uid() = user_id`; no browser-supplied user ID
-may establish ownership. Profile creation and timestamp maintenance happen in
+completion queries. Enable RLS on every user-related table. Profile policies
+scope ownership with `profiles.id = auth.uid()`; workout and reminder policies
+scope ownership with `user_id = auth.uid()`. No browser-supplied user ID may
+establish ownership. Profile creation and timestamp maintenance happen in
 database triggers. Do not expose service-role credentials.
 
 ## Workout persistence and history
