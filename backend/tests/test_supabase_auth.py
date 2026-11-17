@@ -5,11 +5,12 @@ from unittest.mock import patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
-from app.auth import get_current_user
+from app.auth import AuthenticatedUser, get_current_user
+from app.routes.auth import me, router as auth_router
 
 
 class FakeJwksClient:
@@ -126,6 +127,20 @@ class SupabaseAuthTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as raised:
                 get_current_user(credentials)
         self.assertEqual(raised.exception.status_code, 503)
+
+    def test_router_mounts_at_expected_api_path(self):
+        test_app = FastAPI()
+        test_app.include_router(auth_router, prefix="/api")
+        route_methods = {
+            (route.path, method)
+            for route in test_app.routes
+            for method in getattr(route, "methods", set())
+        }
+        self.assertIn(("/api/auth/me", "GET"), route_methods)
+
+    def test_me_returns_only_verified_identity_fields(self):
+        result = me(AuthenticatedUser(id="user-123", email="person@example.com"))
+        self.assertEqual(result, {"id": "user-123", "email": "person@example.com"})
 
 
 if __name__ == "__main__":
