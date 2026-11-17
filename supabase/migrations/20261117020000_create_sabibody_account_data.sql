@@ -31,6 +31,9 @@ declare
   actual_valid boolean;
   expected_definition text;
   probe_table text;
+  equivalent_index_name text;
+  equivalent_index_oid oid;
+  equivalent_index_constraint text;
 begin
   for expected_column in
     select * from (values
@@ -118,6 +121,59 @@ begin
         and regexp_replace(lower(pg_get_constraintdef(constraint_info.oid)), '[[:space:]"]', '', 'g')
           = regexp_replace(lower(expected_definition), '[[:space:]"]', '', 'g')
     ) then
+      continue;
+    end if;
+
+    equivalent_index_name := null;
+    equivalent_index_oid := null;
+    if constraint_spec.kind in ('p', 'u') and constraint_spec.key_columns is not null then
+      select index_relation.relname, index_info.indexrelid
+      into equivalent_index_name, equivalent_index_oid
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.profiles'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+      order by exists (
+        select 1 from pg_constraint as existing_constraint
+        where existing_constraint.conindid = index_info.indexrelid
+      ), index_info.indexrelid
+      limit 1;
+    end if;
+
+    if equivalent_index_oid is not null then
+      if constraint_spec.kind = 'p' then
+        select constraint_info.conname
+        into equivalent_index_constraint
+        from pg_constraint as constraint_info
+        where constraint_info.conindid = equivalent_index_oid;
+        if found then
+          raise exception 'public.profiles equivalent unique index % is already owned by constraint %',
+            equivalent_index_name, equivalent_index_constraint;
+        end if;
+        execute format(
+          'ALTER TABLE public.profiles ADD CONSTRAINT %I PRIMARY KEY USING INDEX %I',
+          constraint_spec.name,
+          equivalent_index_name
+        );
+      end if;
       continue;
     end if;
 
@@ -297,6 +353,9 @@ declare
   actual_valid boolean;
   expected_definition text;
   probe_table text;
+  equivalent_index_name text;
+  equivalent_index_oid oid;
+  equivalent_index_constraint text;
 begin
   for expected_column in
     select * from (values
@@ -414,10 +473,16 @@ begin
       continue;
     end if;
 
-    if constraint_spec.kind = 'u' and constraint_spec.key_columns is not null and exists (
-      select 1
+    equivalent_index_name := null;
+    equivalent_index_oid := null;
+    if constraint_spec.kind in ('p', 'u') and constraint_spec.key_columns is not null then
+      select index_relation.relname, index_info.indexrelid
+      into equivalent_index_name, equivalent_index_oid
       from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
       where index_info.indrelid = 'public.workout_sessions'::regclass
+        and access_method.amname = 'btree'
         and index_info.indisunique
         and index_info.indisvalid
         and index_info.indpred is null
@@ -435,7 +500,29 @@ begin
           from unnest(constraint_spec.key_columns) as expected_key(column_name)
           order by expected_key.column_name
         )
-    ) then
+      order by exists (
+        select 1 from pg_constraint as existing_constraint
+        where existing_constraint.conindid = index_info.indexrelid
+      ), index_info.indexrelid
+      limit 1;
+    end if;
+
+    if equivalent_index_oid is not null then
+      if constraint_spec.kind = 'p' then
+        select constraint_info.conname
+        into equivalent_index_constraint
+        from pg_constraint as constraint_info
+        where constraint_info.conindid = equivalent_index_oid;
+        if found then
+          raise exception 'public.workout_sessions equivalent unique index % is already owned by constraint %',
+            equivalent_index_name, equivalent_index_constraint;
+        end if;
+        execute format(
+          'ALTER TABLE public.workout_sessions ADD CONSTRAINT %I PRIMARY KEY USING INDEX %I',
+          constraint_spec.name,
+          equivalent_index_name
+        );
+      end if;
       continue;
     end if;
 
@@ -603,6 +690,9 @@ declare
   actual_valid boolean;
   expected_definition text;
   probe_table text;
+  equivalent_index_name text;
+  equivalent_index_oid oid;
+  equivalent_index_constraint text;
 begin
   for expected_column in
     select * from (values
@@ -700,10 +790,16 @@ begin
       continue;
     end if;
 
-    if constraint_spec.kind = 'u' and constraint_spec.key_columns is not null and exists (
-      select 1
+    equivalent_index_name := null;
+    equivalent_index_oid := null;
+    if constraint_spec.kind in ('p', 'u') and constraint_spec.key_columns is not null then
+      select index_relation.relname, index_info.indexrelid
+      into equivalent_index_name, equivalent_index_oid
       from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
       where index_info.indrelid = 'public.reminder_preferences'::regclass
+        and access_method.amname = 'btree'
         and index_info.indisunique
         and index_info.indisvalid
         and index_info.indpred is null
@@ -721,7 +817,29 @@ begin
           from unnest(constraint_spec.key_columns) as expected_key(column_name)
           order by expected_key.column_name
         )
-    ) then
+      order by exists (
+        select 1 from pg_constraint as existing_constraint
+        where existing_constraint.conindid = index_info.indexrelid
+      ), index_info.indexrelid
+      limit 1;
+    end if;
+
+    if equivalent_index_oid is not null then
+      if constraint_spec.kind = 'p' then
+        select constraint_info.conname
+        into equivalent_index_constraint
+        from pg_constraint as constraint_info
+        where constraint_info.conindid = equivalent_index_oid;
+        if found then
+          raise exception 'public.reminder_preferences equivalent unique index % is already owned by constraint %',
+            equivalent_index_name, equivalent_index_constraint;
+        end if;
+        execute format(
+          'ALTER TABLE public.reminder_preferences ADD CONSTRAINT %I PRIMARY KEY USING INDEX %I',
+          constraint_spec.name,
+          equivalent_index_name
+        );
+      end if;
       continue;
     end if;
 
@@ -819,6 +937,9 @@ declare
   actual_valid boolean;
   expected_definition text;
   probe_table text;
+  equivalent_index_name text;
+  equivalent_index_oid oid;
+  equivalent_index_constraint text;
 begin
   for expected_column in
     select * from (values
@@ -905,6 +1026,59 @@ begin
         and regexp_replace(lower(pg_get_constraintdef(constraint_info.oid)), '[[:space:]"]', '', 'g')
           = regexp_replace(lower(expected_definition), '[[:space:]"]', '', 'g')
     ) then
+      continue;
+    end if;
+
+    equivalent_index_name := null;
+    equivalent_index_oid := null;
+    if constraint_spec.kind in ('p', 'u') and constraint_spec.key_columns is not null then
+      select index_relation.relname, index_info.indexrelid
+      into equivalent_index_name, equivalent_index_oid
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.admin_users'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+      order by exists (
+        select 1 from pg_constraint as existing_constraint
+        where existing_constraint.conindid = index_info.indexrelid
+      ), index_info.indexrelid
+      limit 1;
+    end if;
+
+    if equivalent_index_oid is not null then
+      if constraint_spec.kind = 'p' then
+        select constraint_info.conname
+        into equivalent_index_constraint
+        from pg_constraint as constraint_info
+        where constraint_info.conindid = equivalent_index_oid;
+        if found then
+          raise exception 'public.admin_users equivalent unique index % is already owned by constraint %',
+            equivalent_index_name, equivalent_index_constraint;
+        end if;
+        execute format(
+          'ALTER TABLE public.admin_users ADD CONSTRAINT %I PRIMARY KEY USING INDEX %I',
+          constraint_spec.name,
+          equivalent_index_name
+        );
+      end if;
       continue;
     end if;
 

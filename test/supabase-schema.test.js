@@ -153,3 +153,26 @@ test('account migration hardens ownership, admin privacy, and rerun safety', asy
   assert.match(sql, /raise\s+exception/i);
   assert.doesNotMatch(sql, /service[_-]?role/i);
 });
+
+test('account migration uses equivalent unique indexes for required primary keys', async () => {
+  const sql = await readFile(fileURLToPath(migrationPath), 'utf8');
+
+  for (const table of [...Object.keys(expectedColumns), 'admin_users']) {
+    const preflight = sql.match(new RegExp(
+      `do\\s+\\$preflight_${table}\\$([\\s\\S]*?)\\$preflight_${table}\\$;`,
+      'i',
+    ))?.[1];
+    assert.ok(preflight, `expected a constraint preflight for ${table}`);
+    assert.ok(
+      /constraint_spec\.kind\s+in\s*\(\s*'p'\s*,\s*'u'\s*\)\s+and\s+constraint_spec\.key_columns\s+is\s+not\s+null\s+then/i.test(preflight),
+      `${table} does not check equivalent unique indexes for primary keys`,
+    );
+    assert.ok(/index_info\.indisunique/i.test(preflight), `${table} does not require unique indexes`);
+    assert.ok(/index_info\.indisvalid/i.test(preflight), `${table} does not require valid indexes`);
+    assert.ok(/primary\s+key\s+using\s+index/i.test(preflight), `${table} does not preserve its primary-key constraint`);
+    assert.ok(
+      /actual_kind::text\s+is\s+distinct\s+from\s+constraint_spec\.kind/i.test(preflight),
+      `${table} no longer validates existing primary-key constraints`,
+    );
+  }
+});
