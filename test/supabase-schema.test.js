@@ -169,6 +169,22 @@ test('account migration uses equivalent unique indexes for required primary keys
     );
     assert.ok(/index_info\.indisunique/i.test(preflight), `${table} does not require unique indexes`);
     assert.ok(/index_info\.indisvalid/i.test(preflight), `${table} does not require valid indexes`);
+    assert.ok(
+      /not\s+exists\s*\([\s\S]*?unnest\(index_info\.indoption\)[\s\S]*?index_order\.ordinal\s*<=\s*index_info\.indnkeyatts[\s\S]*?index_order\.sort_option\s*<>\s*0/i.test(preflight),
+      `${table} does not require ASC NULLS LAST on primary-key index key attributes`,
+    );
+    assert.ok(
+      /constraint_spec\.kind\s*<>\s*'p'\s+or\s+not\s+exists/i.test(preflight),
+      `${table} applies primary-key ordering restrictions to unrelated unique constraints`,
+    );
+    assert.ok(
+      /and\s+exists\s*\([\s\S]*?unnest\(index_info\.indoption\)[\s\S]*?index_order\.ordinal\s*<=\s*index_info\.indnkeyatts[\s\S]*?index_order\.sort_option\s*<>\s*0/i.test(preflight),
+      `${table} does not reject same-key unique indexes with non-default ordering`,
+    );
+    assert.ok(
+      /non-default key ordering; expected ASC NULLS LAST/i.test(preflight),
+      `${table} does not report incompatible primary-key index ordering`,
+    );
     assert.ok(/primary\s+key\s+using\s+index/i.test(preflight), `${table} does not preserve its primary-key constraint`);
     assert.ok(
       /actual_kind::text\s+is\s+distinct\s+from\s+constraint_spec\.kind/i.test(preflight),

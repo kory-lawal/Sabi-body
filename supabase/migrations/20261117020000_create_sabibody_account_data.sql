@@ -138,6 +138,15 @@ begin
         and index_info.indisvalid
         and index_info.indpred is null
         and index_info.indexprs is null
+        and (
+          constraint_spec.kind <> 'p'
+          or not exists (
+            select 1
+            from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+            where index_order.ordinal <= index_info.indnkeyatts
+              and index_order.sort_option <> 0
+          )
+        )
         and array(
           select attribute.attname::text
           from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
@@ -156,6 +165,44 @@ begin
         where existing_constraint.conindid = index_info.indexrelid
       ), index_info.indexrelid
       limit 1;
+    end if;
+
+    if equivalent_index_oid is null and constraint_spec.kind = 'p' then
+      select index_relation.relname
+      into equivalent_index_name
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.profiles'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+        and exists (
+          select 1
+          from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+          where index_order.ordinal <= index_info.indnkeyatts
+            and index_order.sort_option <> 0
+        )
+      limit 1;
+      if found then
+        raise exception 'public.profiles unique index % has non-default key ordering; expected ASC NULLS LAST for PRIMARY KEY USING INDEX',
+          equivalent_index_name;
+      end if;
     end if;
 
     if equivalent_index_oid is not null then
@@ -487,6 +534,15 @@ begin
         and index_info.indisvalid
         and index_info.indpred is null
         and index_info.indexprs is null
+        and (
+          constraint_spec.kind <> 'p'
+          or not exists (
+            select 1
+            from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+            where index_order.ordinal <= index_info.indnkeyatts
+              and index_order.sort_option <> 0
+          )
+        )
         and array(
           select attribute.attname::text
           from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
@@ -505,6 +561,44 @@ begin
         where existing_constraint.conindid = index_info.indexrelid
       ), index_info.indexrelid
       limit 1;
+    end if;
+
+    if equivalent_index_oid is null and constraint_spec.kind = 'p' then
+      select index_relation.relname
+      into equivalent_index_name
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.workout_sessions'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+        and exists (
+          select 1
+          from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+          where index_order.ordinal <= index_info.indnkeyatts
+            and index_order.sort_option <> 0
+        )
+      limit 1;
+      if found then
+        raise exception 'public.workout_sessions unique index % has non-default key ordering; expected ASC NULLS LAST for PRIMARY KEY USING INDEX',
+          equivalent_index_name;
+      end if;
     end if;
 
     if equivalent_index_oid is not null then
@@ -804,6 +898,15 @@ begin
         and index_info.indisvalid
         and index_info.indpred is null
         and index_info.indexprs is null
+        and (
+          constraint_spec.kind <> 'p'
+          or not exists (
+            select 1
+            from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+            where index_order.ordinal <= index_info.indnkeyatts
+              and index_order.sort_option <> 0
+          )
+        )
         and array(
           select attribute.attname::text
           from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
@@ -822,6 +925,44 @@ begin
         where existing_constraint.conindid = index_info.indexrelid
       ), index_info.indexrelid
       limit 1;
+    end if;
+
+    if equivalent_index_oid is null and constraint_spec.kind = 'p' then
+      select index_relation.relname
+      into equivalent_index_name
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.reminder_preferences'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+        and exists (
+          select 1
+          from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+          where index_order.ordinal <= index_info.indnkeyatts
+            and index_order.sort_option <> 0
+        )
+      limit 1;
+      if found then
+        raise exception 'public.reminder_preferences unique index % has non-default key ordering; expected ASC NULLS LAST for PRIMARY KEY USING INDEX',
+          equivalent_index_name;
+      end if;
     end if;
 
     if equivalent_index_oid is not null then
@@ -1043,6 +1184,15 @@ begin
         and index_info.indisvalid
         and index_info.indpred is null
         and index_info.indexprs is null
+        and (
+          constraint_spec.kind <> 'p'
+          or not exists (
+            select 1
+            from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+            where index_order.ordinal <= index_info.indnkeyatts
+              and index_order.sort_option <> 0
+          )
+        )
         and array(
           select attribute.attname::text
           from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
@@ -1061,6 +1211,44 @@ begin
         where existing_constraint.conindid = index_info.indexrelid
       ), index_info.indexrelid
       limit 1;
+    end if;
+
+    if equivalent_index_oid is null and constraint_spec.kind = 'p' then
+      select index_relation.relname
+      into equivalent_index_name
+      from pg_index as index_info
+      join pg_class as index_relation on index_relation.oid = index_info.indexrelid
+      join pg_am as access_method on access_method.oid = index_relation.relam
+      where index_info.indrelid = 'public.admin_users'::regclass
+        and access_method.amname = 'btree'
+        and index_info.indisunique
+        and index_info.indisvalid
+        and index_info.indpred is null
+        and index_info.indexprs is null
+        and array(
+          select attribute.attname::text
+          from unnest(index_info.indkey) with ordinality as index_key(attnum, ordinal)
+          join pg_attribute as attribute
+            on attribute.attrelid = index_info.indrelid
+            and attribute.attnum = index_key.attnum
+          where index_key.ordinal <= index_info.indnkeyatts
+          order by attribute.attname::text
+        ) = array(
+          select expected_key.column_name
+          from unnest(constraint_spec.key_columns) as expected_key(column_name)
+          order by expected_key.column_name
+        )
+        and exists (
+          select 1
+          from unnest(index_info.indoption) with ordinality as index_order(sort_option, ordinal)
+          where index_order.ordinal <= index_info.indnkeyatts
+            and index_order.sort_option <> 0
+        )
+      limit 1;
+      if found then
+        raise exception 'public.admin_users unique index % has non-default key ordering; expected ASC NULLS LAST for PRIMARY KEY USING INDEX',
+          equivalent_index_name;
+      end if;
     end if;
 
     if equivalent_index_oid is not null then
