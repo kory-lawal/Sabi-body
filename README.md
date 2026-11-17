@@ -169,12 +169,15 @@ installed `@supabase/supabase-js` browser client; Next.js-only
 The script defines `profiles`, `workout_sessions`, and
 `reminder_preferences` for user-owned data, plus a private, empty `admin_users`
 table. It defines auth-user profile triggers, row-level security policies, and
-the `get_workout_summary()` RPC. After running the complete script, inspect
+the `get_workout_summary()` RPC. RLS scopes profiles to `id = auth.uid()` and
+workout-session and reminder-preference rows to `user_id = auth.uid()`.
+`admin_users` has RLS enabled, no policies, and no grants to `anon` or
+`authenticated`; it begins empty, and only a trusted project owner may assign
+an admin through the SQL Editor. After running the complete script, inspect
 table columns and constraints, triggers, grants, and policies in the project
 before enabling account features. If Supabase CLI migration history already
 marks this file as applied, editing the file does not make the CLI rerun it;
-use the SQL Editor to run this repeatable script. No admin is seeded; only a
-trusted project owner may assign an admin by adding one through the SQL Editor.
+use the SQL Editor to run this repeatable script.
 
 The dashboard and history read actual rows belonging to the signed-in user.
 Supabase Auth persists the browser session and refreshes tokens; account pages
