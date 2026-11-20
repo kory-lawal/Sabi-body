@@ -610,14 +610,16 @@ class Challenge(Base):
             "status in ('pending', 'active', 'declined', 'cancelled', 'completed', 'expired')", name="status_valid"
         ),
         CheckConstraint("target_total > 0", name="target_positive"),
-        CheckConstraint("exercise_type in ('reps', 'duration')", name="exercise_type_valid"),
+        CheckConstraint("metric in ('reps', 'seconds', 'workouts')", name="metric_valid"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     creator_id: Mapped[uuid.UUID] = _user_ref(index=True)
     opponent_id: Mapped[uuid.UUID] = _user_ref(index=True)
+    # An exercise id, or 'any' for "complete N workouts".
     exercise_id: Mapped[str] = mapped_column(String(40), nullable=False)
-    exercise_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # reps: total reps of the exercise; seconds: longest single plank hold; workouts: completed workouts.
+    metric: Mapped[str] = mapped_column(String(10), nullable=False)
     target_total: Mapped[int] = mapped_column(Integer, nullable=False)
     deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message: Mapped[str | None] = mapped_column(String(280))

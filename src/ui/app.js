@@ -1421,6 +1421,7 @@ function navLinksMarkup(account) {
       ['buddies', 'Buddies', '#/buddies', badges.requests],
       ['calendar', 'Calendar', '#/calendar', badges.invites],
       ['messages', 'Messages', '#/messages', badges.messages],
+      ['challenges', 'Challenges', '#/challenges', badges.challenges],
       ['notifications', 'Notifications', '#/notifications', badges.notifications],
       ['history', 'Workout History', '#/history'],
       ['profile', 'Profile', '#/profile'],

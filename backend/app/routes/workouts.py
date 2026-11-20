@@ -167,6 +167,10 @@ def create_workout(body: WorkoutCreate, current: CurrentUser = Depends(get_curre
         from app.social import shared_workouts
         db.refresh(shared)
         shared_workouts.record(db, current.user.id, shared, row)
+    if inserted is not None:
+        # Challenge progress is computed from real workouts; record anyone who just reached a target.
+        from app.social import challenges
+        challenges.on_workout_saved(db, current.user.id)
     return {"workout": workout_out(row), "duplicate": inserted is None}
 
 

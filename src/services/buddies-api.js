@@ -52,6 +52,10 @@ export function createBuddiesApi(api) {
 
     streaks: () => api.get('/api/streaks', auth),
 
+    challenges: () => api.get('/api/challenges', auth),
+    createChallenge: (body) => api.post('/api/challenges', body, auth),
+    respondChallenge: (challengeId, action) => api.post(`/api/challenges/${id(challengeId)}/${action}`, {}, auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),

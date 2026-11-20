@@ -5,10 +5,11 @@
  */
 import { FRIEND_TABS, renderFriendsPage } from './friends-page.js';
 import { CALENDAR_VIEWS, isoDate, monthGridRange, parseIsoDate, renderCalendarPage, weekRange } from './calendar-page.js';
+import { deadlineFromPreset, renderChallengesPage } from './challenges-page.js';
 import { renderMessagesPage } from './messages-page.js';
 import { renderNotificationsPage } from './notifications-page.js';
 
-export const BUDDY_ROUTES = new Set(['buddies', 'notifications', 'messages', 'calendar']);
+export const BUDDY_ROUTES = new Set(['buddies', 'notifications', 'messages', 'calendar', 'challenges']);
 
 function emptyCalendar() {
   return {
@@ -46,9 +47,10 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     search: { q: '', results: null, loading: false, error: '' },
     profile: null,
     notifications: { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false },
-    counts: { notifications: 0, requests: 0, messages: 0, invites: 0 },
+    counts: { notifications: 0, requests: 0, messages: 0, invites: 0, challenges: 0 },
     calendar: emptyCalendar(),
     streaks: { streaks: null, error: '' },
+    challenges: { data: null, error: '', form: { open: false, values: {}, error: '' } },
     chat: { conversations: null, unread: 0, loading: false, error: '', thread: null },
     share: null,
     online: new Set(),
@@ -158,6 +160,18 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     if (notes.status === 'fulfilled') state.counts.notifications = notes.value.unread;
     if (messages.status === 'fulfilled' && messages.value) state.counts.messages = messages.value.unread;
     void loadInvites();
+    if (buddiesApi.challenges) void loadChallenges();
+    changed();
+  }
+
+  async function loadChallenges() {
+    try {
+      state.challenges.data = await buddiesApi.challenges();
+      state.challenges.error = '';
+      state.counts.challenges = state.challenges.data.pending.filter((c) => c.awaiting_me).length;
+    } catch (error) {
+      state.challenges.error = describe(error);
+    }
     changed();
   }
 
@@ -438,6 +452,17 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
         void loadInvites();
         break;
       }
+      case 'challenges': {
+        const page = state.challenges;
+        if (route.params.new) {
+          page.form = { open: true, error: '', values: { ...page.form.values, with: route.params.with, metric: route.params.metric } };
+        } else {
+          page.form = { open: false, values: {}, error: '' };
+        }
+        if (!state.friends.data) void loadFriends({ quiet: true });
+        void loadChallenges();
+        break;
+      }
       case 'messages': {
         void loadConversations({ quiet: Boolean(state.chat.conversations) });
         if (!state.friends.data) void loadFriends({ quiet: true });
@@ -570,6 +595,17 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       case 'more-notifications':
         void loadNotifications({ append: true });
         return true;
+      case 'challenge-accept':
+      case 'challenge-decline':
+      case 'challenge-cancel': {
+        const verb = action.split('-')[1];
+        if (verb === 'cancel' && needsConfirm(target, `challenge-cancel:${id}`)) return true;
+        void act(`challenge:${id}`, async () => {
+          await buddiesApi.respondChallenge(id, verb);
+          await loadChallenges();
+        }, verb === 'accept' ? 'Challenge accepted — game on!' : verb === 'decline' ? 'Challenge declined.' : 'Challenge cancelled.');
+        return true;
+      }
       case 'retry-session':
         if (state.calendar.selected) void loadSelected(state.calendar.selected.id);
         return true;
@@ -663,6 +699,35 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
           await afterFriendChange();
         }, 'Thanks — our team will review your report.');
         break;
+      case 'create-challenge': {
+        const page = state.challenges;
+        page.form.values = { ...page.form.values, ...values };
+        const deadline = deadlineFromPreset(values.preset, values.custom);
+        const targetValue = Number(values.target);
+        if (!deadline || Number.isNaN(deadline.getTime()) || deadline.getTime() < Date.now() + 3_600_000) {
+          page.form.error = 'Choose a deadline at least an hour from now.';
+          changed();
+          return true;
+        }
+        if (!Number.isInteger(targetValue) || targetValue < 1) {
+          page.form.error = 'Choose a target of at least 1.';
+          changed();
+          return true;
+        }
+        page.form.error = '';
+        void act('create-challenge', async () => {
+          const { challenge } = await buddiesApi.createChallenge({
+            friend_id: values.friend_id, metric: values.metric, exercise_id: values.metric === 'seconds' ? 'plank' : (values.exercise_id || 'any'),
+            target: targetValue, deadline: deadline.toISOString(), message: values.message || null,
+          });
+          page.form = { open: false, values: {}, error: '' };
+          view?.history?.replaceState?.(view.history.state, '', '#/challenges');
+          route = { name: 'challenges', params: {} };
+          await loadChallenges();
+          return challenge;
+        }, (challenge) => `Challenge sent to ${challenge.friend?.first_name ?? 'your friend'}.`);
+        break;
+      }
       case 'create-session': {
         const cal = state.calendar;
         cal.form.values = { ...cal.form.values, ...values };
@@ -740,6 +805,13 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
 
   function handleChange(event) {
     const input = event.target;
+    if (input?.dataset && 'buddyMetric' in input.dataset) {
+      const values = input.form ? formValues(input.form) : {};
+      state.challenges.form.values = { ...state.challenges.form.values, ...values, metric: input.value, target: undefined,
+        exercise_id: undefined };
+      changed();
+      return true;
+    }
     if (input?.dataset && 'buddyMode' in input.dataset) {
       const form = input.form;
       const values = form ? formValues(form) : {};
@@ -816,6 +888,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     });
     realtime.on('chat.message', onChatMessage);
     realtime.on('session.updated', () => refreshCalendar());
+    realtime.on('challenge.updated', () => void loadChallenges());
     realtime.on('streaks.changed', () => {
       void loadFriends({ quiet: true });
       if (route.name === 'buddies' && route.params.tab === 'streaks') void loadStreaks();
@@ -855,6 +928,9 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     if (name === 'notifications') {
       return renderNotificationsPage({ ...state.notifications, ...shared });
     }
+    if (name === 'challenges') {
+      return renderChallengesPage({ ...state.challenges, friends: state.friends.data?.friends ?? [], confirm: state.confirm, ...shared });
+    }
     if (name === 'calendar') {
       return renderCalendarPage({ calendar: state.calendar, friends: state.friends.data?.friends ?? [],
         connection: state.connection, features, confirm: state.confirm, ...shared });
@@ -882,7 +958,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     state.search = { q: '', results: null, loading: false, error: '' };
     state.profile = null;
     state.notifications = { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false };
-    state.counts = { notifications: 0, requests: 0, messages: 0, invites: 0 };
+    state.counts = { notifications: 0, requests: 0, messages: 0, invites: 0, challenges: 0 };
+    state.challenges = { data: null, error: '', form: { open: false, values: {}, error: '' } };
     state.calendar = emptyCalendar();
     state.chat = { conversations: null, unread: 0, loading: false, error: '', thread: null };
     state.share = null;

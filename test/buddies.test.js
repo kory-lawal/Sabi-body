@@ -226,3 +226,26 @@ test('streak list shows buddy and exercise streaks, and the rules', () => {
   assert.match(streakBadge({ current: 3 }), /🔥 3/);
   assert.match(streakRulesMarkup(), /not calendar days/);
 });
+
+import { deadlineFromPreset, renderChallengesPage } from '../src/ui/buddies/challenges-page.js';
+
+test('challenge cards show both progress bars and the right actions', () => {
+  const challenge = {
+    id: 'c1', status: 'active', metric: 'reps', exercise_id: 'push-ups', target: 30, summary: '30 push-ups',
+    deadline: new Date(Date.now() + 86_400_000 * 3).toISOString(), friend: bola, created_by_me: false,
+    awaiting_me: false, my_progress: 12, friend_progress: 30, i_reached: false, friend_reached: true,
+  };
+  const html = renderChallengesPage({ data: { pending: [], active: [challenge], past: [] }, form: { open: false, values: {} }, friends: [bola] });
+  assert.match(html, /30 push-ups/);
+  assert.match(html, /12 \/ 30/);
+  assert.match(html, /30 \/ 30 ✓/);
+  assert.match(html, /data-action="choose-exercise" data-exercise="push-ups"/);
+  assert.doesNotMatch(html, /data-buddy-action="challenge-cancel"/, 'only the creator can cancel');
+});
+
+test('deadline presets are always at least an hour away', () => {
+  for (const preset of ['today', '3days', 'week', '7days']) {
+    assert.ok(deadlineFromPreset(preset).getTime() - Date.now() >= 3_600_000, preset);
+  }
+  assert.equal(deadlineFromPreset('custom', ''), null);
+});

@@ -42,9 +42,11 @@ HOOKS: list[Callable[[Session, datetime], dict]] = []
 
 
 def _register_hooks() -> None:
-    from app.social import shared_workouts, streaks
+    from app.social import challenges, shared_workouts, streaks
     if streaks.evaluate_due not in HOOKS:
         HOOKS.append(streaks.evaluate_due)
+    if challenges.finalize_due not in HOOKS:
+        HOOKS.append(challenges.finalize_due)
     if streaks.on_session_finished not in shared_workouts.ON_SESSION_FINISHED:
         shared_workouts.ON_SESSION_FINISHED.append(streaks.on_session_finished)
 

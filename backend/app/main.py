@@ -21,6 +21,7 @@ from app.realtime.ws import router as ws_router
 from app.realtime import handlers_chat, rooms  # noqa: F401  (register socket handlers)
 from app.routes.rtc import router as rtc_router
 from app.routes.chat import router as chat_router
+from app.routes.challenges import router as challenges_router
 from app.routes.shared_sessions import router as shared_sessions_router
 
 logging.basicConfig(level=logging.INFO)
@@ -60,6 +61,7 @@ app.include_router(friends_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(ws_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(challenges_router, prefix="/api")
 app.include_router(rtc_router, prefix="/api")
 app.include_router(shared_sessions_router, prefix="/api")
 app.include_router(pose_router)
