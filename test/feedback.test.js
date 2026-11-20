@@ -16,6 +16,9 @@ import { createSpeechCoach } from '../src/feedback/speech.js';
 import { createVoiceClient } from '../src/services/voice-client.js';
 
 const EXPECTED_LANGUAGE_CODES = ['en', 'yo', 'ig', 'ha', 'pcm'];
+const ENGLISH_ONLY_EXERCISE_MESSAGES = new Set([
+  'instruction-high-knees',
+]);
 
 test('every categorized coaching phrase defines all supported locales without fallback', () => {
   assert.deepEqual(Object.keys(COACHING_PHRASES).sort(), [
@@ -29,6 +32,13 @@ test('every categorized coaching phrase defines all supported locales without fa
 
   for (const [category, phrases] of Object.entries(COACHING_PHRASES)) {
     for (const [messageId, translations] of Object.entries(phrases)) {
+      if (ENGLISH_ONLY_EXERCISE_MESSAGES.has(messageId)) {
+        assert.deepEqual(Object.keys(translations), ['en']);
+        assert.ok(translations.en.trim());
+        assert.equal(translateMessage(messageId, 'en').isFallback, false);
+        assert.equal(translateMessage(messageId, 'yo').isFallback, true);
+        continue;
+      }
       assert.deepEqual(
         Object.keys(translations).sort(),
         [...EXPECTED_LANGUAGE_CODES].sort(),
@@ -54,6 +64,7 @@ test('every supported exercise maps to a distinct localized workout instruction'
     'push-ups',
     'sit-ups',
     'lunges',
+    'high-knees',
   ];
   const instructionIds = Object.values(EXERCISE_INSTRUCTION_IDS);
 
@@ -159,6 +170,15 @@ test('coaching dictionary contains the required production events in every langu
       assert.equal(result.isFallback, false, `${messageId}/${code} should not silently fall back`);
       assert.equal(result.translationStatus, code === 'en' ? 'verified' : 'unverified');
     }
+  }
+});
+
+test('all seven exercise instructions have English text', () => {
+  assert.equal(Object.keys(EXERCISE_INSTRUCTION_IDS).length, 7);
+  for (const [exerciseId, messageId] of Object.entries(EXERCISE_INSTRUCTION_IDS)) {
+    const result = translateMessage(messageId, 'en');
+    assert.ok(result.text, `${exerciseId} should have an instruction`);
+    assert.equal(result.isFallback, false);
   }
 });
 

@@ -1,4 +1,5 @@
 import { angleAt, isVisible } from './geometry.js';
+import { createStartPoseGate } from './readiness.js';
 
 const START_ANGLE = 150;
 const LOST_ANGLE = 135;
@@ -50,7 +51,29 @@ function measurePlank(landmarks) {
   return verticalMeasurement;
 }
 
+function measureStartPose(landmarks) {
+  const measurement = measurePlank(landmarks);
+  const poseReady = Boolean(
+    measurement?.orientationValid && measurement.angle >= START_ANGLE,
+  );
+  return {
+    poseReady,
+    feedbackId: measurement ? (poseReady ? null : 'adjust-alignment') : 'body-not-visible',
+    rejectionReasonId: measurement
+      ? poseReady
+        ? null
+        : measurement.orientationValid
+          ? 'alignment-invalid'
+          : 'orientation-invalid'
+      : 'missing-landmarks',
+    metrics: measurement
+      ? { side: measurement.side, alignmentAngle: measurement.angle }
+      : {},
+  };
+}
+
 export function createPlankAnalyzer() {
+  const readinessGate = createStartPoseGate(measureStartPose);
   let elapsedMs = 0;
   let active = false;
   let alignedSince = null;
@@ -59,6 +82,7 @@ export function createPlankAnalyzer() {
   let lastValidAt = null;
 
   function invalidatePhase() {
+    readinessGate.reset();
     active = false;
     alignedSince = null;
     belowPauseSince = null;
@@ -179,5 +203,9 @@ export function createPlankAnalyzer() {
     });
   }
 
-  return { update, reset, invalidatePhase };
+  function checkReady(landmarks, timestamp) {
+    return readinessGate.check(landmarks, timestamp);
+  }
+
+  return { update, reset, invalidatePhase, checkReady };
 }

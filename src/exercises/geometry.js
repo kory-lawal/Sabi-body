@@ -9,6 +9,14 @@ function isPoint(point) {
   );
 }
 
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 export function angleAt(a, b, c) {
   if (![a, b, c].every(isPoint)) {
     return null;
@@ -71,4 +79,59 @@ export function hasFullBodyVisible(landmarks) {
       isVisible(landmarks[index], 0.55),
     )
   );
+}
+
+export function createLandmarkSmoother() {
+  const windowSize = 3;
+  let samples = [];
+  let lastTimestamp = null;
+
+  function reset() {
+    samples = [];
+    lastTimestamp = null;
+  }
+
+  function update(landmarks, timestamp) {
+    if (!Array.isArray(landmarks) || !Number.isFinite(timestamp)) {
+      reset();
+      return landmarks;
+    }
+
+    if (
+      lastTimestamp !== null &&
+      (timestamp < lastTimestamp || timestamp - lastTimestamp >= 500)
+    ) {
+      reset();
+    }
+    lastTimestamp = timestamp;
+
+    return landmarks.map((landmark, index) => {
+      if (!isVisible(landmark)) {
+        samples[index] = [];
+        return landmark;
+      }
+
+      const history = samples[index] ?? (samples[index] = []);
+      history.push({ x: landmark.x, y: landmark.y });
+      if (history.length > windowSize) {
+        history.shift();
+      }
+
+      const position =
+        history.length === 2
+          ? history[0]
+          : {
+              x: median(history.map((sample) => sample.x)),
+              y: median(history.map((sample) => sample.y)),
+            };
+
+      return {
+        ...landmark,
+        x: position.x,
+        y: position.y,
+      };
+    });
+  }
+
+  return { update, reset };
 }

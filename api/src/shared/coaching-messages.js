@@ -1,4 +1,5 @@
 const phrase = (en, yo, ig, ha, pcm) => ({ en, yo, ig, ha, pcm });
+const englishPhrase = (en) => ({ en });
 
 export const COACHING_PHRASES = {
   'camera-body-alignment': {
@@ -220,6 +221,9 @@ export const COACHING_PHRASES = {
       'Gaa n’ihu, kpọọ ikpere abụọ, mesịa laghachi n’ọnọdụ guzoro.',
       'Yi gaba, lanƙwasa gwiwoyi biyu, sannan ka koma tsaye.',
       'Step forward, bend both knees, then return to standing.',
+    ),
+    'instruction-high-knees': englishPhrase(
+      'Stand tall and lift one knee toward hip height, then alternate sides.',
     ),
   },
   motivation: {
@@ -540,6 +544,7 @@ export const EXERCISE_INSTRUCTION_IDS = {
   'push-ups': 'instruction-push-ups',
   'sit-ups': 'instruction-sit-ups',
   lunges: 'instruction-lunges',
+  'high-knees': 'instruction-high-knees',
 };
 
 const MESSAGE_CATALOG = Object.create(null);

@@ -1,4 +1,5 @@
 import { angleAt, isVisible } from './geometry.js';
+import { createStartPoseGate } from './readiness.js';
 
 const START_ANGLE = 165;
 const BEND_ANGLE = 135;
@@ -13,7 +14,46 @@ const SIDES = [
   { name: 'right', hip: 24, knee: 26, ankle: 28 },
 ];
 
+function measureStartPose(landmarks) {
+  const measurements = {};
+  if (Array.isArray(landmarks)) {
+    for (const side of SIDES) {
+      const hip = landmarks[side.hip];
+      const knee = landmarks[side.knee];
+      const ankle = landmarks[side.ankle];
+      if (![hip, knee, ankle].every((landmark) => isVisible(landmark))) {
+        continue;
+      }
+      const angle = angleAt(hip, knee, ankle);
+      if (angle !== null) {
+        measurements[side.name] = angle;
+      }
+    }
+  }
+
+  const poseReady =
+    Object.keys(measurements).length > 0 &&
+    Object.values(measurements).every((angle) => angle >= START_ANGLE);
+  return {
+    poseReady,
+    feedbackId:
+      Object.keys(measurements).length === 0
+        ? 'body-not-visible'
+        : poseReady
+          ? null
+          : 'stand-straight',
+    rejectionReasonId:
+      Object.keys(measurements).length === 0
+        ? 'missing-landmarks'
+        : poseReady
+          ? null
+          : 'start-pose-invalid',
+    metrics: measurements,
+  };
+}
+
 export function createSquatAnalyzer() {
+  const readinessGate = createStartPoseGate(measureStartPose);
   let count = 0;
   let armed = false;
   let pendingSide = null;
@@ -22,6 +62,7 @@ export function createSquatAnalyzer() {
   let lastUsableAt = null;
 
   function invalidatePhase() {
+    readinessGate.reset();
     armed = false;
     pendingSide = null;
     baselineHipY = {};
@@ -162,5 +203,9 @@ export function createSquatAnalyzer() {
     });
   }
 
-  return { update, reset, invalidatePhase };
+  function checkReady(landmarks, timestamp) {
+    return readinessGate.check(landmarks, timestamp);
+  }
+
+  return { update, reset, invalidatePhase, checkReady };
 }

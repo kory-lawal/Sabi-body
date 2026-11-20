@@ -1,4 +1,5 @@
 import { isVisible } from './geometry.js';
+import { createStartPoseGate } from './readiness.js';
 
 const START_ANGLE = 20;
 const RISE_ANGLE = 55;
@@ -37,7 +38,19 @@ function measureTrunk(landmarks) {
   return null;
 }
 
+function measureStartPose(landmarks) {
+  const trunk = measureTrunk(landmarks);
+  const poseReady = Boolean(trunk && trunk.angle <= START_ANGLE);
+  return {
+    poseReady,
+    feedbackId: trunk ? (poseReady ? null : 'return-to-start') : 'body-not-visible',
+    rejectionReasonId: trunk ? (poseReady ? null : 'start-pose-invalid') : 'missing-landmarks',
+    metrics: trunk ? { side: trunk.side, trunkAngle: trunk.angle } : {},
+  };
+}
+
 export function createSitUpAnalyzer() {
+  const readinessGate = createStartPoseGate(measureStartPose);
   let count = 0;
   let armed = false;
   let raised = false;
@@ -45,6 +58,7 @@ export function createSitUpAnalyzer() {
   let lastUsableAt = null;
 
   function invalidatePhase() {
+    readinessGate.reset();
     armed = false;
     raised = false;
     lastUsableAt = null;
@@ -127,5 +141,9 @@ export function createSitUpAnalyzer() {
     });
   }
 
-  return { update, reset, invalidatePhase };
+  function checkReady(landmarks, timestamp) {
+    return readinessGate.check(landmarks, timestamp);
+  }
+
+  return { update, reset, invalidatePhase, checkReady };
 }

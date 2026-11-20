@@ -737,3 +737,20 @@ test('plank phase invalidation preserves earned time and restarts the timer', ()
   assert.equal(analyzer.update(landmarks, 2000).active, true);
   assert.equal(analyzer.update(landmarks, 2100).elapsedMs, 200);
 });
+
+test('squat, jumping jack and plank readiness require a stable start pose', () => {
+  const squat = createSquatAnalyzer();
+  assert.equal(squat.checkReady(createLandmarks(), 0).ready, false);
+  assert.equal(squat.checkReady(createLandmarks(), 400).ready, true);
+  assert.equal(squat.update(createLandmarks(), 401).count, 0);
+
+  const jumpingJack = createJumpingJackAnalyzer();
+  assert.equal(jumpingJack.checkReady(createJumpingJackLandmarks('closed'), 0).ready, false);
+  assert.equal(jumpingJack.checkReady(createJumpingJackLandmarks('closed'), 400).ready, true);
+  assert.equal(jumpingJack.update(createJumpingJackLandmarks('closed'), 401).count, 0);
+
+  const plank = createPlankAnalyzer();
+  assert.equal(plank.checkReady(createPlankLandmarks(), 0).ready, false);
+  assert.equal(plank.checkReady(createPlankLandmarks(), 400).ready, true);
+  assert.equal(plank.update(createPlankLandmarks(), 401).elapsedMs, 0);
+});

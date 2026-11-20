@@ -1,4 +1,5 @@
 import { distance, isVisible } from './geometry.js';
+import { createStartPoseGate } from './readiness.js';
 
 const REQUIRED_POINTS = [11, 12, 15, 16, 23, 24, 27, 28];
 const OPEN_FEET_RATIO = 1.35;
@@ -34,7 +35,19 @@ function measurePose(landmarks) {
   };
 }
 
+function measureStartPose(landmarks) {
+  const pose = measurePose(landmarks);
+  const poseReady = Boolean(pose?.closed);
+  return {
+    poseReady,
+    feedbackId: pose ? (poseReady ? null : 'jack-return-closed') : 'body-not-visible',
+    rejectionReasonId: pose ? (poseReady ? null : 'start-pose-invalid') : 'missing-landmarks',
+    metrics: pose ? { feetRatio: pose.feetRatio } : {},
+  };
+}
+
 export function createJumpingJackAnalyzer() {
+  const readinessGate = createStartPoseGate(measureStartPose);
   let count = 0;
   let ready = false;
   let opened = false;
@@ -42,6 +55,7 @@ export function createJumpingJackAnalyzer() {
   let lastUsableAt = null;
 
   function invalidatePhase() {
+    readinessGate.reset();
     ready = false;
     opened = false;
     lastUsableAt = null;
@@ -127,5 +141,9 @@ export function createJumpingJackAnalyzer() {
     });
   }
 
-  return { update, reset, invalidatePhase };
+  function checkReady(landmarks, timestamp) {
+    return readinessGate.check(landmarks, timestamp);
+  }
+
+  return { update, reset, invalidatePhase, checkReady };
 }
