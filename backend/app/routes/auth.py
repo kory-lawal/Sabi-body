@@ -41,6 +41,7 @@ from app.accounts.security import (
     verify_password,
 )
 from app.config import settings
+from app.social import usernames
 from app.db.models import (
     AdminAuditLog,
     AdminRole,
@@ -67,6 +68,7 @@ def user_out(user: User, db: Session) -> UserOut:
         id=user.id,
         full_name=user.full_name,
         email=user.email,
+        username=user.username,
         email_verified=user.email_verified,
         created_at=user.created_at,
         is_admin=is_admin,
@@ -142,6 +144,9 @@ def revoke_user_sessions(db: Session, user_id: uuid.UUID, reason: str, except_se
     if except_session is not None:
         stmt = stmt.where(RefreshSession.id != except_session)
     db.execute(stmt)
+    # Close the live sockets of the revoked sessions as well.
+    from app.realtime.registry import registry
+    registry.close_user_sessions(user_id, except_session)
 
 
 def _maybe_bootstrap_admin(db: Session, user: User) -> None:
@@ -207,6 +212,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
         raise api_error(status.HTTP_409_CONFLICT, "email_taken",
                         "An account with this email already exists. Log in or reset your password.")
     user = User(full_name=body.full_name, email=email, password_hash=hash_password(body.password),
+                username=usernames.generate(db, email),
                 email_verified=not settings.REQUIRE_EMAIL_VERIFICATION)
     db.add(user)
     try:

@@ -11,6 +11,8 @@ export default defineConfig({
       '^/api/(?!src/)': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // The realtime socket (/api/ws) is proxied too during development.
+        ws: true,
       },
     },
   },

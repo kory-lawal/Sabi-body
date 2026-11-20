@@ -34,7 +34,7 @@ function describeCameraError(error, phase) {
   return cameraError;
 }
 
-function waitForVideoReady(videoElement, timeoutMs = 10000) {
+export function waitForVideoReady(videoElement, timeoutMs = 10000) {
   const readyStateThreshold = videoElement.HAVE_CURRENT_DATA ?? 2;
   if (
     videoElement.readyState === undefined ||

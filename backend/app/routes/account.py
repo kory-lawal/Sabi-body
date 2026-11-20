@@ -1,7 +1,12 @@
 """The signed-in user's own account. Every query is scoped to current.user.id."""
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from app.social import usernames
 
 from app.accounts import emails, rate_limit
 from app.accounts.deps import CurrentUser, api_error, get_current_user
@@ -11,6 +16,7 @@ from app.accounts.schemas import (
     DeleteAccountRequest,
     MessageOut,
     UpdateProfileRequest,
+    UpdateUsernameRequest,
     UserOut,
 )
 from app.accounts.security import hash_password, utcnow, verify_password
@@ -39,6 +45,45 @@ def update_me(body: UpdateProfileRequest, current: CurrentUser = Depends(get_cur
     user = current.user
     user.full_name = body.full_name
     db.commit()
+    db.refresh(user)
+    return user_out(user, db)
+
+
+USERNAME_CHANGE_COOLDOWN = timedelta(days=7)
+
+
+@router.get("/username/available")
+def username_available(u: str, request: Request, current: CurrentUser = Depends(get_current_user),
+                       db: Session = Depends(get_db)) -> dict:
+    rate_limit.enforce(request, "username_check", limit=120, window_seconds=600, identity=str(current.user.id),
+                       identity_limit=60)
+    name = usernames.validate(u)
+    available = name == current.user.username or not usernames.is_taken(db, name, exclude=current.user.id)
+    return {"username": name, "available": available}
+
+
+@router.put("/username", response_model=UserOut)
+def update_username(body: UpdateUsernameRequest, request: Request, current: CurrentUser = Depends(get_current_user),
+                    db: Session = Depends(get_db)) -> UserOut:
+    user = current.user
+    rate_limit.enforce(request, "username_change", limit=10, window_seconds=3600, identity=str(user.id),
+                       identity_limit=5)
+    name = usernames.validate(body.username)
+    if name == user.username:
+        return user_out(user, db)
+    now = utcnow()
+    if user.username_changed_at is not None and now - user.username_changed_at < USERNAME_CHANGE_COOLDOWN:
+        raise api_error(status.HTTP_429_TOO_MANY_REQUESTS, "username_cooldown",
+                        "You can change your username once a week.")
+    if usernames.is_taken(db, name, exclude=user.id):
+        raise api_error(status.HTTP_409_CONFLICT, "username_taken", "That username is already taken.")
+    user.username = name
+    user.username_changed_at = now
+    try:
+        db.commit()
+    except IntegrityError as exc:  # concurrent claim of the same name
+        db.rollback()
+        raise api_error(status.HTTP_409_CONFLICT, "username_taken", "That username is already taken.") from exc
     db.refresh(user)
     return user_out(user, db)
 

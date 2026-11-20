@@ -33,6 +33,13 @@ import { createVoiceClient } from '../services/voice-client.js';
 import { createAccountData } from '../services/account-data.js';
 import { createAuthService } from '../services/auth-service.js';
 import { createAccountController } from './account/account-controller.js';
+import { createBuddiesController } from './buddies/buddies-controller.js';
+import { createBuddiesApi } from '../services/buddies-api.js';
+import { createRealtimeClient, realtimeUrl } from '../buddies/realtime-client.js';
+import { createSharedWorkout } from '../buddies/shared-workout.js';
+import { renderTogether, togetherScreenKey, updateTogether } from './buddies/together-view.js';
+import { parseRoute } from './router.js';
+import { waitForVideoReady } from '../camera/camera.js';
 import { EXERCISES } from './exercise-content.js';
 
 const MOBILE_WORKOUT_QUERY =
@@ -1407,11 +1414,14 @@ function navLinksMarkup(account) {
   }
   const authenticated = account.status === 'authenticated';
   const items = [['home', 'Home', '#/'], ['exercises', 'Exercises', '#/exercises']];
+  const badges = account.badges ?? {};
   if (authenticated) {
     items.push(
       ['dashboard', 'Dashboard', '#/dashboard'],
-      ['history', 'Workout History', '#/history'],
-      ['profile', 'Profile', '#/profile'],
+      ['buddies', 'Buddies', '#/buddies', (badges.requests ?? 0) + (badges.challenges ?? 0)],
+      ['calendar', 'Calendar', '#/calendar', badges.invites],
+      ['messages', 'Messages', '#/messages', badges.messages],
+      ['history', 'History', '#/history'],
       ['settings', 'Settings', '#/settings'],
     );
     if (account.user?.is_admin) {
@@ -1420,7 +1430,7 @@ function navLinksMarkup(account) {
   }
   return `
     <nav class="app-nav" aria-label="Main navigation">
-      ${items.map(([id, label, href]) => `<a class="app-nav__link${account.route === id ? ' is-active' : ''}" href="${href}"${account.route === id ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+      ${items.map(([id, label, href, count]) => `<a class="app-nav__link${account.route === id ? ' is-active' : ''}" href="${href}"${account.route === id ? ' aria-current="page"' : ''}>${label}${count ? ` <span class="count-pill" aria-label="${count} new">${count > 99 ? '99+' : count}</span>` : ''}</a>`).join('')}
     </nav>`;
 }
 
@@ -1430,8 +1440,12 @@ function accountActionsMarkup(account) {
   }
   if (account.status === 'authenticated') {
     const name = account.user?.full_name ?? '';
+    const unread = account.badges?.notifications ?? 0;
     return `
       <div class="app-nav__account">
+        <a class="app-nav__bell${account.route === 'notifications' ? ' is-active' : ''}" href="#/notifications" aria-label="Notifications${unread ? ` (${unread} unread)` : ''}">
+          <span aria-hidden="true">🔔</span>${unread ? `<span class="count-pill count-pill--bell" aria-hidden="true">${unread > 99 ? '99+' : unread}</span>` : ''}
+        </a>
         <a class="app-nav__user" href="#/profile" aria-label="Your profile: ${escapeHtml(name)}">
           <span class="avatar avatar--sm" aria-hidden="true">${escapeHtml(accountInitials(name))}</span>
           <span class="app-nav__user-name">${escapeHtml(name.split(/\s+/)[0] || 'Profile')}</span>
@@ -1536,13 +1550,40 @@ function goalOptions(exerciseId, selectedTarget) {
   `;
 }
 
+/** Social shortcuts on the exercise screen (signed-in users only; never during a workout). */
+function buddyShareMarkup(state) {
+  if (state.account?.status !== 'authenticated') {
+    return '';
+  }
+  const id = encodeURIComponent(state.selectedExercise);
+  return `
+        <div class="buddy-share" aria-label="Exercise with friends">
+          <a class="button button--primary button--small" href="#/calendar?new=instant&amp;exercise=${id}&amp;target=${state.target}">Do it with a buddy</a>
+          <a class="button button--quiet button--small" href="#/calendar?new=scheduled&amp;exercise=${id}&amp;target=${state.target}">Schedule with a buddy</a>
+          <a class="button button--quiet button--small" href="#/messages?share=${id}&amp;target=${state.target}">Send to a friend</a>
+        </div>`;
+}
+
+function liveInviteMarkup(state) {
+  const waiting = state.account?.badges?.waiting;
+  if (!waiting || state.account?.status !== 'authenticated') {
+    return '';
+  }
+  return `
+      <a class="live-strip" href="#/together?session=${encodeURIComponent(waiting.sessionId)}">
+        <span class="live-strip__dot" aria-hidden="true"></span>
+        <span><strong>${escapeHtml(waiting.name)}</strong> is waiting for you in your workout room.</span>
+        <span class="live-strip__cta">Join now →</span>
+      </a>`;
+}
+
 function siteHeaderMarkup(state) {
   return `
       <header class="site-header">
         ${brandLogoMarkup()}
         <p class="tagline">The sabi-sabi fitness coach</p>
         ${mobileSettingsMarkup(state)}
-      </header>`;
+      </header>${liveInviteMarkup(state)}`;
 }
 
 function heroAccountMarkup(account) {
@@ -1838,6 +1879,7 @@ function renderWorkout(root, state) {
         <p class="workout-heading__eyebrow">Your movement, your pace</p>
         <h1 tabindex="-1">${exercise.name}</h1>
         <p>${exercise.instruction}</p>
+        ${buddyShareMarkup(state)}
       </div>
       <section class="exercise-instructions" aria-labelledby="exercise-instructions-title">
         <figure class="exercise-instructions__figure">
@@ -2115,6 +2157,7 @@ export function mountApp(root, {
   controllerOptions = {},
   authService: providedAuthService,
   accountData: providedAccountData,
+  realtime: providedRealtime,
   accounts = Boolean(providedAuthService) || (typeof globalThis.location?.hash === 'string' && typeof globalThis.fetch === 'function'),
 } = {}) {
   if (!root) {
@@ -2127,9 +2170,37 @@ export function mountApp(root, {
   let controller;
   let lastRouteName = null;
   const authService = accounts ? (providedAuthService ?? createAuthService()) : null;
+  const realtime = authService && typeof authService.api?.getAccessToken === 'function'
+    ? (providedRealtime ?? createRealtimeClient({
+      url: realtimeUrl(ownerDocument?.defaultView?.location ?? globalThis.location, import.meta.env ?? {}),
+      getToken: () => authService.api.getAccessToken(),
+      refreshToken: async () => (await authService.api.refresh())?.access_token ?? null,
+      view: ownerDocument?.defaultView ?? globalThis,
+    }))
+    : null;
+  if (realtime) {
+    authService.api.onTokenChange?.((token) => realtime.tokenChanged(token));
+    authService.subscribe((state) => {
+      if (state.status === 'authenticated') realtime.connect();
+      else if (state.status === 'anonymous') realtime.disconnect();
+    });
+  }
+  const buddiesApi = authService ? createBuddiesApi(authService.api) : null;
+  let sharedWorkout = null;
+  const buddiesController = authService
+    ? createBuddiesController({
+      realtime,
+      buddiesApi,
+      getUser: () => authService.getState().user,
+      features: { messages: true, together: true },
+      refreshUser: () => authService.refreshUser(),
+      view: ownerDocument?.defaultView ?? globalThis,
+    })
+    : null;
   const accountController = authService
     ? createAccountController({
       authService,
+      buddies: buddiesController,
       accountData: providedAccountData ?? createAccountData(authService.api),
       view: ownerDocument?.defaultView ?? globalThis,
       requestRender: () => {
@@ -2149,6 +2220,7 @@ export function mountApp(root, {
       user: accountController.user(),
       route: accountController.route().name,
       save: accountController.saveState(),
+      badges: accountController.badges?.() ?? null,
     };
   }
   function setMobileSettingsOpen(open) {
@@ -2236,9 +2308,23 @@ export function mountApp(root, {
     latestState = incomingState;
     const account = accountInfo();
     const state = account ? { ...incomingState, account } : incomingState;
+    if (sharedWorkout?.isActive()) {
+      sharedWorkout.onLocalState(incomingState);
+      const together = togetherScreenKey(sharedWorkout);
+      if (together !== currentScreen) {
+        setMobileSettingsOpen(false);
+        currentScreen = together;
+        renderTogether(root, state, sharedWorkout);
+      }
+      updateTogether(root, state, sharedWorkout);
+      ownerDocument?.body?.classList?.toggle('workout-active', false);
+      ownerDocument?.body?.classList?.toggle('duo-active', true);
+      return;
+    }
+    ownerDocument?.body?.classList?.toggle('duo-active', false);
     const workoutBusy = ['loading', 'running', 'paused', 'completed'].includes(state.workoutStatus);
     const showAccountPage = Boolean(accountController?.isActive()) && state.view === 'home' && !workoutBusy;
-    const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}` : '';
+    const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}:${account.badges?.waiting?.sessionId ?? ''}` : '';
     const screen = showAccountPage
       ? `account:${accountController.version()}`
       : state.view === 'home'
@@ -2320,17 +2406,71 @@ export function mountApp(root, {
       }
     },
   });
+  async function attachSharedStream(videoElement) {
+    const shared = sharedWorkout.stream();
+    videoElement.srcObject = shared;
+    videoElement.muted = true;
+    await videoElement.play?.()?.catch?.(() => {});
+    await waitForVideoReady(videoElement);
+    return shared;
+  }
+  const acquireCamera = controllerOptions.startCamera;
+  const releaseCamera = controllerOptions.stopCamera;
   controller = createWorkoutController({
-    onWorkoutAttemptEnded: (attempt) => accountController?.saveWorkoutAttempt(attempt),
+    // In Workout Together the attempt is linked to the shared session; each
+    // person's own result is saved to their own history.
+    onWorkoutAttemptEnded: (attempt) => accountController?.saveWorkoutAttempt(
+      sharedWorkout?.isActive() ? { ...attempt, sharedSessionId: sharedWorkout.sessionId() } : attempt),
     ...controllerOptions,
+    // While a shared room is open, MediaPipe uses the room's camera stream (the same
+    // one sent to the partner) and finishing must not switch that camera off.
+    startCamera: (videoElement) => (sharedWorkout?.isActive() && sharedWorkout.stream()
+      ? attachSharedStream(videoElement)
+      : (acquireCamera ?? startCamera)(videoElement)),
+    stopCamera: (mediaStream, videoElement) => {
+      if (sharedWorkout?.isActive() && mediaStream && mediaStream === sharedWorkout.stream()) {
+        return undefined;
+      }
+      return (releaseCamera ?? stopCamera)(mediaStream, videoElement);
+    },
     onState: render,
     speechCoach: coach,
     audioCoach,
     voicePlayback: playbackManager,
     getMediaElements: () => ({
-      video: root.querySelector('video'),
-      canvas: root.querySelector('canvas'),
+      video: root.querySelector('[data-local-video]') ?? root.querySelector('video'),
+      canvas: root.querySelector('[data-local-canvas]') ?? root.querySelector('canvas'),
     }),
+  });
+
+  if (realtime && buddiesApi) {
+    sharedWorkout = createSharedWorkout({
+      realtime,
+      buddiesApi,
+      getUser: () => authService.getState().user,
+      workout: controller,
+      onChange: () => render(controller.getState()),
+      navigate: (name, params) => accountController?.navigate(name, params),
+      view: ownerDocument?.defaultView ?? globalThis,
+    });
+  }
+
+  function syncTogetherRoute() {
+    if (!sharedWorkout) return;
+    const route = parseRoute((ownerDocument?.defaultView ?? globalThis).location?.hash ?? '');
+    if (route.name === 'together') {
+      buddiesController?.clearWaiting(route.params.session);
+      if (authService.getState().status === 'authenticated' && route.params.session
+        && sharedWorkout.sessionId() !== route.params.session) {
+        void sharedWorkout.enter(route.params.session);
+      }
+    } else if (sharedWorkout.isActive()) {
+      void sharedWorkout.leave({ navigateAway: false });
+    }
+  }
+  authService?.subscribe((authState) => {
+    if (authState.status === 'authenticated') syncTogetherRoute();
+    else if (authState.status === 'anonymous' && sharedWorkout?.isActive()) void sharedWorkout.leave({ navigateAway: false });
   });
 
   root.addEventListener('click', (event) => {
@@ -2343,6 +2483,53 @@ export function mountApp(root, {
       return;
     }
     switch (button.dataset.action) {
+      case 'duo-ready':
+        sharedWorkout?.setReady(!sharedWorkout.getState().ready);
+        break;
+      case 'duo-start':
+        sharedWorkout?.startCounting();
+        break;
+      case 'duo-retry-media':
+        void sharedWorkout?.retryMedia();
+        break;
+      case 'duo-mic':
+        sharedWorkout?.toggleMic();
+        break;
+      case 'duo-cam':
+        sharedWorkout?.toggleCam();
+        break;
+      case 'duo-counts':
+        sharedWorkout?.toggleCounts();
+        break;
+      case 'duo-cheer':
+        sharedWorkout?.cheer(button.dataset.cheer);
+        button.closest?.('details')?.removeAttribute?.('open');
+        break;
+      case 'duo-enable-audio':
+        sharedWorkout?.enableRemoteAudio();
+        break;
+      case 'duo-leave':
+        void sharedWorkout?.leave();
+        break;
+      case 'duo-dashboard':
+        void sharedWorkout?.leave({ navigateAway: false }).then(() => accountController?.navigate('buddies'));
+        break;
+      case 'duo-round-repeat':
+        sharedWorkout?.proposeRound(button.dataset.exercise, button.dataset.target);
+        break;
+      case 'duo-round-other': {
+        const form = button.closest?.('[data-duo-round-form]');
+        const exercise = form?.querySelector?.('[data-duo-next-exercise]')?.value;
+        const target = form?.querySelector?.('[data-duo-next-target]')?.value;
+        if (exercise && target) sharedWorkout?.proposeRound(exercise, target);
+        break;
+      }
+      case 'duo-round-accept':
+        sharedWorkout?.respondRound(true);
+        break;
+      case 'duo-round-decline':
+        sharedWorkout?.respondRound(false);
+        break;
       case 'scroll-exercises': {
         const section = root.querySelector('#exercise-selection');
         const reducedMotion = globalThis.matchMedia?.(
@@ -2358,6 +2545,9 @@ export function mountApp(root, {
       case 'choose-exercise':
         accountController?.clearSaveState();
         controller.selectExercise(button.dataset.exercise);
+        if (button.dataset.target) {
+          controller.setGoal(button.dataset.target);
+        }
         break;
       case 'start':
         if (isMobileWorkoutViewport()) {
@@ -2423,6 +2613,10 @@ export function mountApp(root, {
     accountController?.handleSubmit(event);
   });
 
+  root.addEventListener('keydown', (event) => {
+    accountController?.handleKeydown?.(event);
+  });
+
   root.addEventListener('change', (event) => {
     if (accountController?.handleChange(event)) {
       return;
@@ -2479,6 +2673,11 @@ export function mountApp(root, {
   if (accountController) {
     accountView?.addEventListener?.('hashchange', () => {
       setMobileSettingsOpen(false);
+      syncTogetherRoute();
+      if (parseRoute(accountView.location?.hash ?? '').name === 'together') {
+        render(controller.getState());
+        return;
+      }
       const status = controller.getState().workoutStatus;
       if (status === 'completed') {
         controller.goToExerciseChooser();

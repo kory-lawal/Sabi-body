@@ -51,6 +51,7 @@ export function createAccountController({
   view = globalThis,
   requestRender = () => {},
   timeZone = browserTimeZone,
+  buddies = null,
 }) {
   let route = parseRoute(view?.location?.hash);
   let version = 0;
@@ -76,6 +77,7 @@ export function createAccountController({
     version += 1;
     requestRender();
   }
+  buddies?.setChangeListener(changed);
 
   function navigate(name, params = {}, { replace = false } = {}) {
     const href = routeHref(name, params);
@@ -139,6 +141,9 @@ export function createAccountController({
         void verifyEmail();
         break;
       default:
+        if (buddies?.handles(route.name)) {
+          buddies.load(route);
+        }
         break;
     }
   }
@@ -155,8 +160,16 @@ export function createAccountController({
     changed();
   }
 
+  let countsLoadedFor = null;
   authService.subscribe((state) => {
+    if (state.status === 'authenticated' && buddies && countsLoadedFor !== state.user?.id) {
+      countsLoadedFor = state.user?.id;
+      void buddies.refreshCounts();
+      void buddies.loadFriends({ quiet: true });
+    }
     if (state.status === 'anonymous') {
+      countsLoadedFor = null;
+      buddies?.reset();
       for (const key of ['dashboard', 'history', 'profile', 'settings', 'admin']) {
         if (key === 'history') {
           Object.assign(pages.history, { items: null, total: 0 });
@@ -476,6 +489,15 @@ export function createAccountController({
 
   async function submitMemberForm(name, values) {
     switch (name) {
+      case 'update-username':
+        if (!values.username?.trim()) {
+          setFlash('', 'Enter a username.');
+          return changed();
+        }
+        return runMemberAction(name, async () => {
+          await authService.api.put('/api/account/username', { username: values.username.trim() }, { auth: true });
+          await authService.refreshUser();
+        }, 'Your username has been updated.');
       case 'update-name':
         if (!values.fullName?.trim()) {
           setFlash('', 'Enter your full name.');
@@ -568,6 +590,9 @@ export function createAccountController({
 
   // ------------------------------------------------------------ DOM events
   function handleSubmit(event) {
+    if (buddies?.handleSubmit(event)) {
+      return true;
+    }
     const formElement = event.target;
     const name = formElement?.dataset?.acctForm;
     if (!name) {
@@ -597,6 +622,9 @@ export function createAccountController({
   }
 
   function handleClick(event) {
+    if (buddies?.handleClick(event)) {
+      return true;
+    }
     const target = event.target.closest?.('[data-acct-action]');
     if (!target) {
       return false;
@@ -670,6 +698,9 @@ export function createAccountController({
   }
 
   function handleInput(event) {
+    if (buddies?.handleInput(event)) {
+      return true;
+    }
     const input = event.target;
     if (input?.dataset && 'passwordRules' in input.dataset) {
       const list = view?.document?.querySelector?.(`[data-rules-for="${input.id}"]`);
@@ -687,6 +718,9 @@ export function createAccountController({
   }
 
   function handleChange(event) {
+    if (buddies?.handleChange?.(event)) {
+      return true;
+    }
     const control = event.target;
     if (control?.dataset?.reminderToggle === 'email_reminders_enabled') {
       const slots = control.form?.querySelector?.('[data-reminder-slots]');
@@ -733,7 +767,7 @@ export function createAccountController({
             : `<div class="state-panel state-panel--error" role="alert"><h1 id="page-title" tabindex="-1">Not available</h1><p>The admin dashboard is only for SabiBody administrators.</p><a class="button button--quiet" href="#/dashboard">Go to your dashboard</a></div>`;
           break;
         default:
-          inner = '';
+          inner = buddies?.handles(name) ? buddies.render(name, route.params) : '';
       }
       return `<main class="page page--${name}" id="main">${inner}</main>`;
     }
@@ -810,6 +844,7 @@ export function createAccountController({
       view?.scrollTo?.({ top: 0 });
     }
     resetFormName = '';
+    buddies?.afterRender?.(root, route);
   }
 
   return {
@@ -819,6 +854,7 @@ export function createAccountController({
     authStatus: () => auth().status,
     user,
     saveState: () => saveState,
+    badges: () => buddies?.counts() ?? null,
     clearSaveState() {
       saveState = { status: 'idle', attempt: null, message: '' };
     },
@@ -829,6 +865,7 @@ export function createAccountController({
     handleSubmit,
     handleInput,
     handleChange,
+    handleKeydown: (event) => buddies?.handleKeydown?.(event) ?? false,
     start() {
       void authService.restore();
       if (guard()) {
