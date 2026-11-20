@@ -70,6 +70,22 @@ export function createApiClient({
 } = {}) {
   let accessToken = null;
   let refreshPromise = null;
+  const tokenListeners = new Set();
+
+  function setToken(token) {
+    const next = token || null;
+    if (next === accessToken) {
+      return;
+    }
+    accessToken = next;
+    for (const listener of tokenListeners) {
+      try {
+        listener(accessToken);
+      } catch {
+        /* a listener must never break authentication */
+      }
+    }
+  }
 
   async function send(path, { method = 'GET', body, auth = false, signal } = {}) {
     const headers = { Accept: 'application/json' };
@@ -116,7 +132,7 @@ export function createApiClient({
           const response = await send('/api/auth/refresh', { method: 'POST' });
           if (response.ok) {
             const session = await parse(response);
-            accessToken = session.access_token;
+            setToken(session.access_token);
             return session;
           }
           const error = await toApiError(response);
@@ -125,10 +141,10 @@ export function createApiClient({
             await wait(250 * (attempt + 1));
             continue;
           }
-          accessToken = null;
+          setToken(null);
           throw error;
         }
-        accessToken = null;
+        setToken(null);
         throw new ApiError('Please log in again.', { status: 401, code: 'session_revoked' });
       })().finally(() => {
         refreshPromise = null;
@@ -166,8 +182,14 @@ export function createApiClient({
     patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
     delete: (path, body, options) => request(path, { ...options, method: 'DELETE', body }),
     setAccessToken(token) {
-      accessToken = token || null;
+      setToken(token);
     },
     hasAccessToken: () => Boolean(accessToken),
+    /** The current in-memory access token (used to authenticate the realtime socket). */
+    getAccessToken: () => accessToken,
+    onTokenChange(listener) {
+      tokenListeners.add(listener);
+      return () => tokenListeners.delete(listener);
+    },
   };
 }

@@ -144,6 +144,9 @@ def revoke_user_sessions(db: Session, user_id: uuid.UUID, reason: str, except_se
     if except_session is not None:
         stmt = stmt.where(RefreshSession.id != except_session)
     db.execute(stmt)
+    # Close the live sockets of the revoked sessions as well.
+    from app.realtime.registry import registry
+    registry.close_user_sessions(user_id, except_session)
 
 
 def _maybe_bootstrap_admin(db: Session, user: User) -> None:

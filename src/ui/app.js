@@ -35,6 +35,7 @@ import { createAuthService } from '../services/auth-service.js';
 import { createAccountController } from './account/account-controller.js';
 import { createBuddiesController } from './buddies/buddies-controller.js';
 import { createBuddiesApi } from '../services/buddies-api.js';
+import { createRealtimeClient, realtimeUrl } from '../buddies/realtime-client.js';
 import { EXERCISES } from './exercise-content.js';
 
 const MOBILE_WORKOUT_QUERY =
@@ -2120,6 +2121,7 @@ export function mountApp(root, {
   controllerOptions = {},
   authService: providedAuthService,
   accountData: providedAccountData,
+  realtime: providedRealtime,
   accounts = Boolean(providedAuthService) || (typeof globalThis.location?.hash === 'string' && typeof globalThis.fetch === 'function'),
 } = {}) {
   if (!root) {
@@ -2132,8 +2134,24 @@ export function mountApp(root, {
   let controller;
   let lastRouteName = null;
   const authService = accounts ? (providedAuthService ?? createAuthService()) : null;
+  const realtime = authService && typeof authService.api?.getAccessToken === 'function'
+    ? (providedRealtime ?? createRealtimeClient({
+      url: realtimeUrl(ownerDocument?.defaultView?.location ?? globalThis.location, import.meta.env ?? {}),
+      getToken: () => authService.api.getAccessToken(),
+      refreshToken: async () => (await authService.api.refresh())?.access_token ?? null,
+      view: ownerDocument?.defaultView ?? globalThis,
+    }))
+    : null;
+  if (realtime) {
+    authService.api.onTokenChange?.((token) => realtime.tokenChanged(token));
+    authService.subscribe((state) => {
+      if (state.status === 'authenticated') realtime.connect();
+      else if (state.status === 'anonymous') realtime.disconnect();
+    });
+  }
   const buddiesController = authService
     ? createBuddiesController({
+      realtime,
       buddiesApi: createBuddiesApi(authService.api),
       getUser: () => authService.getState().user,
       refreshUser: () => authService.refreshUser(),

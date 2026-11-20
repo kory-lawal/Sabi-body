@@ -17,6 +17,7 @@ from app.routes.pose import router as pose_router
 from app.routes.reminders import router as reminders_router
 from app.routes.speech import router as speech_router
 from app.routes.workouts import router as workouts_router
+from app.realtime.ws import router as ws_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sabibody")
@@ -53,6 +54,7 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(internal_router, prefix="/api")
 app.include_router(friends_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
+app.include_router(ws_router, prefix="/api")
 app.include_router(pose_router)
 
 

@@ -13,7 +13,7 @@ function describe(error) {
 }
 
 export function createBuddiesController({ buddiesApi, getUser, refreshUser = async () => {}, view = globalThis,
-  features = {} }) {
+  features = {}, realtime = null }) {
   let changed = () => {};
   let route = { name: '', params: {} };
   let searchTimer = null;
@@ -25,6 +25,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     profile: null,
     notifications: { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false },
     counts: { notifications: 0, requests: 0 },
+    online: new Set(),
+    connection: 'idle',
     confirm: '',
     pending: '',
     message: '',
@@ -342,6 +344,41 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     return false;
   }
 
+  // ------------------------------------------------------------ realtime
+  if (realtime) {
+    realtime.onStatus((status) => {
+      state.connection = status;
+      changed();
+    });
+    realtime.on('ready', (data) => {
+      state.online = new Set(data.online_friends ?? []);
+      state.counts.notifications = data.unread ?? state.counts.notifications;
+      changed();
+    });
+    realtime.on('presence.update', (data) => {
+      if (data.online) state.online.add(data.user_id);
+      else state.online.delete(data.user_id);
+      changed();
+    });
+    realtime.on('notification.new', (data) => {
+      state.counts.notifications = data.unread ?? state.counts.notifications + 1;
+      const page = state.notifications;
+      if (page.items && data.notification) {
+        page.items = [data.notification, ...page.items.filter((n) => n.id !== data.notification.id)];
+        page.unread = state.counts.notifications;
+      }
+      changed();
+    });
+    realtime.on('notification.read', (data) => {
+      state.counts.notifications = data.unread ?? 0;
+      state.notifications.unread = state.counts.notifications;
+      changed();
+    });
+    realtime.on('friends.changed', () => {
+      void loadFriends({ quiet: true });
+    });
+  }
+
   // ------------------------------------------------------------ rendering
   function render(name, params) {
     const shared = { pending: state.pending, message: state.message, failure: state.failure };
@@ -349,7 +386,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       const tab = FRIEND_TABS.includes(params.tab) ? params.tab : 'friends';
       return renderFriendsPage({
         me: getUser(), tab, ...state.friends, search: state.search, profile: state.profile, confirm: state.confirm,
-        features, ...shared,
+        features, online: state.online, connection: state.connection, ...shared,
       });
     }
     if (name === 'notifications') {
@@ -364,6 +401,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     state.profile = null;
     state.notifications = { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false };
     state.counts = { notifications: 0, requests: 0 };
+    state.online = new Set();
   }
 
   return {

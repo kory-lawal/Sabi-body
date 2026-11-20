@@ -289,3 +289,22 @@
   margin: 1rem 0 0.25rem;
   font-size: 1rem;
 }
+
+.presence-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.3rem;
+  border-radius: 50%;
+  background: var(--success);
+  vertical-align: middle;
+}
+
+.connection-note {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-control);
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: 0.9rem;
+}

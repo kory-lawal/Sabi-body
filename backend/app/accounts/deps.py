@@ -36,7 +36,11 @@ def _bearer_token(request: Request) -> str:
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> CurrentUser:
-    token = _bearer_token(request)
+    return authenticate_token(db, _bearer_token(request))
+
+
+def authenticate_token(db: Session, token: str) -> CurrentUser:
+    """Validate an access token and its refresh session (shared by REST and the realtime socket)."""
     try:
         payload = decode_access_token(token)
         user_id = uuid.UUID(payload["sub"])
@@ -72,15 +76,18 @@ def get_admin_user(current: CurrentUser = Depends(get_current_user), db: Session
     return current
 
 
+def origin_allowed(origin: str | None) -> bool:
+    if origin is None:
+        return True
+    allowed = set(settings.ALLOWED_ORIGINS) | {settings.FRONTEND_URL}
+    return origin.rstrip("/") in allowed
+
+
 def require_trusted_origin(request: Request) -> None:
     """CSRF defence for cookie-authenticated endpoints (refresh, logout).
 
     SameSite=Lax already stops cross-site POSTs from carrying the cookie; this
     additionally rejects requests whose Origin is not an allowed frontend.
     """
-    origin = request.headers.get("origin")
-    if origin is None:
-        return
-    allowed = set(settings.ALLOWED_ORIGINS) | {settings.FRONTEND_URL}
-    if origin.rstrip("/") not in allowed:
+    if not origin_allowed(request.headers.get("origin")):
         raise api_error(status.HTTP_403_FORBIDDEN, "untrusted_origin", "This request origin is not allowed.")

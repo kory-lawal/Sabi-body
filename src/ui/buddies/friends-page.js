@@ -11,6 +11,13 @@ import {
   tabs,
 } from './components.js';
 
+export function connectionNotice(connection) {
+  if (connection === 'reconnecting' || connection === 'offline') {
+    return `<p class="connection-note" role="status">${connection === 'offline' ? 'You’re offline. Changes will sync when you reconnect.' : 'Reconnecting to SabiBody… live updates will resume shortly.'}</p>`;
+  }
+  return '';
+}
+
 export const FRIEND_TABS = ['friends', 'requests', 'sent', 'blocked', 'find'];
 
 const REPORT_REASONS = [
@@ -57,7 +64,7 @@ function reportForm(friend, pending) {
     </form>`;
 }
 
-function friendCard(friend, { confirm, pending, features }) {
+function friendCard(friend, { confirm, pending, features, online }) {
   const actions = [];
   if (features.messages) {
     actions.push(`<a class="button button--quiet button--small" href="#/messages?with=${encodeURIComponent(friend.username)}">Message</a>`);
@@ -69,7 +76,7 @@ function friendCard(friend, { confirm, pending, features }) {
     <li class="friend-card">
       <div class="friend-card__main">
         ${personLine(friend)}
-        <p class="friend-card__meta">${escapeHtml(friendsSince(friend.friends_since))}${friend.muted ? ' · <span class="badge badge--muted">Muted</span>' : ''}</p>
+        <p class="friend-card__meta">${online?.has(friend.id) ? '<span class="presence-dot" aria-hidden="true"></span><span>Online now</span> · ' : ''}${escapeHtml(friendsSince(friend.friends_since))}${friend.muted ? ' · <span class="badge badge--muted">Muted</span>' : ''}</p>
       </div>
       <div class="friend-card__actions">${actions.join('')}</div>
       <details class="friend-card__more">
@@ -139,7 +146,7 @@ function profilePanel(profile) {
 }
 
 export function renderFriendsPage({ me, tab = 'friends', data, loading, error, search = {}, profile, confirm, pending,
-  message, failure, features = {} }) {
+  message, failure, features = {}, online = new Set(), connection = 'idle' }) {
   const incomingCount = data?.incoming?.length ?? 0;
   const header = pageHeader({
     title: 'Friends',
@@ -199,7 +206,7 @@ export function renderFriendsPage({ me, tab = 'friends', data, loading, error, s
       : emptyState({ title: 'You haven’t blocked anyone', body: 'Blocked people can’t find you, message you or invite you.' });
   } else {
     body = data.friends.length
-      ? `<ul class="friend-list">${data.friends.map((f) => friendCard(f, { confirm, pending, features })).join('')}</ul>`
+      ? `<ul class="friend-list">${data.friends.map((f) => friendCard(f, { confirm, pending, features, online })).join('')}</ul>`
       : emptyState({
         title: 'Find your first workout buddy',
         body: 'People who exercise with a friend are more likely to keep going. Search for a friend’s username to get started.',
@@ -209,6 +216,7 @@ export function renderFriendsPage({ me, tab = 'friends', data, loading, error, s
 
   return `
     ${header}
+    ${connectionNotice(connection)}
     ${notice(message, 'success')}
     ${notice(failure)}
     ${nav}
