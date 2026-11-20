@@ -20,6 +20,7 @@ from app.routes.workouts import router as workouts_router
 from app.realtime.ws import router as ws_router
 from app.realtime import handlers_chat  # noqa: F401  (registers socket handlers)
 from app.routes.chat import router as chat_router
+from app.routes.shared_sessions import router as shared_sessions_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sabibody")
@@ -58,7 +59,45 @@ app.include_router(friends_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(ws_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(shared_sessions_router, prefix="/api")
 app.include_router(pose_router)
+
+
+async def _buddy_ticker() -> None:
+    """Run Buddies jobs every minute while this process is awake (reminder precision).
+
+    GitHub Actions' 15-minute cron remains the backstop when the server was asleep;
+    delivery logs make concurrent or repeated runs harmless.
+    """
+    import asyncio
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.db.session import new_session
+    from app.jobs.buddy_jobs import run_buddy_jobs
+
+    def tick() -> None:
+        db = new_session()
+        try:
+            run_buddy_jobs(db)
+        finally:
+            db.close()
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_in_threadpool(tick)
+        except Exception:  # noqa: BLE001
+            logger.exception("Buddies ticker run failed")
+
+
+@app.on_event("startup")
+async def _start_background_jobs() -> None:
+    import asyncio
+    import os
+
+    if settings.database_configured and os.getenv("SABI_DISABLE_TICKER") != "1":
+        app.state.buddy_ticker = asyncio.create_task(_buddy_ticker())
 
 
 @app.get("/")

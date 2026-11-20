@@ -70,7 +70,8 @@ function friendCard(friend, { confirm, pending, features, online }) {
     actions.push(`<a class="button button--quiet button--small" href="#/messages?with=${encodeURIComponent(friend.username)}">Message</a>`);
   }
   if (features.together) {
-    actions.push(`<button class="button button--primary button--small" type="button" data-buddy-action="invite" data-username="${escapeHtml(friend.username)}">Work out together</button>`);
+    actions.push(`<a class="button button--primary button--small" href="#/calendar?new=instant&amp;with=${encodeURIComponent(friend.username)}">Work out together</a>`);
+    actions.push(`<a class="button button--quiet button--small" href="#/calendar?new=scheduled&amp;with=${encodeURIComponent(friend.username)}">Schedule</a>`);
   }
   return `
     <li class="friend-card">

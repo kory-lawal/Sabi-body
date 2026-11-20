@@ -40,6 +40,13 @@ export function createBuddiesApi(api) {
     markConversationRead: (friendId) => api.post(`/api/conversations/${id(friendId)}/read`, {}, auth),
     nudge: (friendId, preset) => api.post(`/api/friends/${id(friendId)}/nudge`, { preset }, auth),
 
+    // shared workouts & calendar
+    sessions: (params) => api.get(`/api/shared-sessions${query(params)}`, auth),
+    session: (sessionId) => api.get(`/api/shared-sessions/${id(sessionId)}`, auth),
+    createSession: (body) => api.post('/api/shared-sessions', body, auth),
+    respondSession: (sessionId, action) => api.post(`/api/shared-sessions/${id(sessionId)}/${action}`, {}, auth),
+    rescheduleSession: (sessionId, scheduledAt) => api.post(`/api/shared-sessions/${id(sessionId)}/reschedule`, { scheduled_at: scheduledAt }, auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),

@@ -5,7 +5,7 @@
  */
 export const PUBLIC_ROUTES = new Set(['home', 'exercises', 'login', 'register', 'forgot-password', 'reset-password', 'verify-email']);
 export const AUTH_ONLY_ROUTES = new Set(['login', 'register', 'forgot-password']);
-export const PROTECTED_ROUTES = new Set(['dashboard', 'history', 'profile', 'settings', 'admin', 'buddies', 'notifications', 'messages']);
+export const PROTECTED_ROUTES = new Set(['dashboard', 'history', 'profile', 'settings', 'admin', 'buddies', 'notifications', 'messages', 'calendar']);
 export const ACCOUNT_ROUTES = new Set([...PROTECTED_ROUTES, 'login', 'register', 'forgot-password', 'reset-password', 'verify-email']);
 
 export function parseRoute(hash = '') {

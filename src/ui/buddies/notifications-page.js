@@ -6,6 +6,11 @@ const EXERCISE_NAMES = {
   lunges: 'lunges', 'high-knees': 'high knees',
 };
 
+function whenText(iso) {
+  if (!iso) return 'a scheduled day';
+  return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+}
+
 export function exerciseLabel(id) {
   return EXERCISE_NAMES[id] ?? 'workout';
 }
@@ -24,11 +29,11 @@ export function describeNotification(n) {
     case 'workout_invite':
       return p.mode === 'instant'
         ? { text: `${who} wants to do ${exerciseLabel(p.exercise_id)} with you now.`, href: `#/calendar?session=${n.entity_id}` }
-        : { text: `${who} invited you to ${exerciseLabel(p.exercise_id)} on ${p.when_text ?? 'a scheduled day'}.`, href: `#/calendar?session=${n.entity_id}` };
+        : { text: `${who} invited you to ${exerciseLabel(p.exercise_id)} on ${whenText(p.scheduled_at)}.`, href: `#/calendar?session=${n.entity_id}` };
     case 'invite_response':
       return { text: `${who} ${p.response === 'accepted' ? 'accepted' : p.response === 'countered' ? 'suggested a new time for' : 'declined'} your ${exerciseLabel(p.exercise_id)} workout.`, href: `#/calendar?session=${n.entity_id}` };
     case 'session_update':
-      return { text: p.change === 'cancelled' ? `${who} cancelled your ${exerciseLabel(p.exercise_id)} workout.` : `${who} moved your ${exerciseLabel(p.exercise_id)} workout to ${p.when_text ?? 'a new time'}.`, href: `#/calendar?session=${n.entity_id}` };
+      return { text: p.change === 'cancelled' ? `${who} cancelled your ${exerciseLabel(p.exercise_id)} workout.` : `${who} moved your ${exerciseLabel(p.exercise_id)} workout to ${whenText(p.scheduled_at)}.`, href: `#/calendar?session=${n.entity_id}` };
     case 'workout_reminder':
       return { text: p.kind === 'start' ? `It’s time for your ${exerciseLabel(p.exercise_id)} workout with ${who}!` : `Your ${exerciseLabel(p.exercise_id)} workout with ${who} starts ${p.kind === '24h' ? 'tomorrow' : 'in one hour'}.`, href: `#/calendar?session=${n.entity_id}` };
     case 'missed_commitment':

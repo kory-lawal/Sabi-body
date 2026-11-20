@@ -170,3 +170,33 @@ def reminder_email(to: str, name: str, reminder_type: str) -> EmailMessage:
             url,
         ),
     )
+
+
+def buddy_reminder_email(to: str, name: str, partner: str, exercise: str, local_time: str, kind: str,
+                         session_id: str) -> EmailMessage:
+    """Shared-workout reminders: 24 hours before (optional), one hour before, and at start time."""
+    url = f"{settings.FRONTEND_URL}/#/calendar?session={session_id}"
+    first = name.split(" ")[0] or "there"
+    if kind == "start":
+        subject = f"It's time to work out with {partner}!"
+        lines = [f"Hey {first},", f"It's time for your workout with {partner}.",
+                 f"You both planned to complete {exercise} today.",
+                 "Your workout partner is counting on you. Open SabiBody and join your session."]
+        title, action = f"Time to work out with {partner}", "Join your session"
+    elif kind == "24h":
+        subject = f"Your SabiBody workout with {partner} is tomorrow"
+        lines = [f"Hey {first},", f"Your workout with {partner} is tomorrow.",
+                 f"You both have a {exercise} session scheduled for {local_time}.",
+                 "Plan your workout space now and show up for each other."]
+        title, action = "Your workout is tomorrow", "View workout"
+    else:
+        subject = "Your SabiBody workout is in one hour!"
+        lines = [f"Hey {first},", f"Your workout with {partner} starts in one hour.",
+                 f"You both have a {exercise} session scheduled for {local_time}.",
+                 "Get ready, prepare your workout space and show up for each other.", "See you soon!"]
+        title, action = "Your workout is in one hour", "View workout"
+    text = "\n\n".join(lines) + f"\n\n{url}\n\n— SabiBody\n\nYou can change workout reminder emails in SabiBody → Notifications."
+    return EmailMessage(
+        to=to, subject=subject, text=text,
+        html=_layout(title, [html.escape(line) for line in lines] + ["— SabiBody"], action, url),
+    )

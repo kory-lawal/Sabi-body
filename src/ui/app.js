@@ -1415,6 +1415,7 @@ function navLinksMarkup(account) {
     items.push(
       ['dashboard', 'Dashboard', '#/dashboard'],
       ['buddies', 'Buddies', '#/buddies', badges.requests],
+      ['calendar', 'Calendar', '#/calendar', badges.invites],
       ['messages', 'Messages', '#/messages', badges.messages],
       ['notifications', 'Notifications', '#/notifications', badges.notifications],
       ['history', 'Workout History', '#/history'],
@@ -1551,7 +1552,9 @@ function buddyShareMarkup(state) {
   const id = encodeURIComponent(state.selectedExercise);
   return `
         <div class="buddy-share" aria-label="Exercise with friends">
-          <a class="button button--quiet button--small" href="#/messages?share=${id}">Send to a friend</a>
+          <a class="button button--primary button--small" href="#/calendar?new=instant&amp;exercise=${id}&amp;target=${state.target}">Do it with a buddy</a>
+          <a class="button button--quiet button--small" href="#/calendar?new=scheduled&amp;exercise=${id}&amp;target=${state.target}">Schedule with a buddy</a>
+          <a class="button button--quiet button--small" href="#/messages?share=${id}&amp;target=${state.target}">Send to a friend</a>
         </div>`;
 }
 
@@ -2168,6 +2171,7 @@ export function mountApp(root, {
       realtime,
       buddiesApi: createBuddiesApi(authService.api),
       getUser: () => authService.getState().user,
+      features: { messages: true, together: true },
       refreshUser: () => authService.refreshUser(),
       view: ownerDocument?.defaultView ?? globalThis,
     })

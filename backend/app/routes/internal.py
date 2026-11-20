@@ -6,6 +6,7 @@ from app.accounts.deps import api_error
 from app.accounts.security import tokens_match
 from app.config import settings
 from app.db.session import get_db
+from app.jobs.buddy_jobs import run_buddy_jobs
 from app.jobs.reminders import run_reminders
 
 router = APIRouter(prefix="/internal", include_in_schema=False)
@@ -21,4 +22,7 @@ def _require_cron_secret(request: Request) -> None:
 
 @router.post("/reminders/run", dependencies=[Depends(_require_cron_secret)])
 def trigger_reminders(db: Session = Depends(get_db)) -> dict:
-    return run_reminders(db)
+    stats = run_reminders(db)
+    # The same cron call also runs the Buddies jobs (shared-workout reminders, expiry, streaks).
+    stats["buddies"] = run_buddy_jobs(db)
+    return stats

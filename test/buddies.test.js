@@ -162,3 +162,51 @@ test('Enter sends a chat message, Shift+Enter adds a new line', () => {
   assert.equal(controller.handleKeydown({ target: input, key: 'Enter', shiftKey: true, preventDefault() {} }), false);
   assert.equal(submitted, 1);
 });
+
+import { monthGridRange, renderCalendarPage } from '../src/ui/buddies/calendar-page.js';
+
+function cal(overrides = {}) {
+  return {
+    view: 'upcoming', date: '2026-11-20', range: { key: '', sessions: [], error: '' },
+    lists: { upcoming: [], pending: [], past: [], cancelled: [] }, selected: null,
+    form: { open: false, values: {}, error: '' }, ...overrides,
+  };
+}
+
+const invite = {
+  id: 's1', mode: 'scheduled', status: 'proposed', exercise_id: 'push-ups', exercise_name: 'Push-ups', exercise_type: 'reps',
+  target: 20, scheduled_at: '2026-11-25T18:00:00Z', partner: bola, awaiting_me: true, created_by_me: false, can_join: false,
+};
+
+test('month grid always shows six Monday-first weeks', () => {
+  const { start, end } = monthGridRange(new Date(2026, 10, 20));
+  assert.equal(start.getDay(), 1);
+  assert.equal(Math.round((end - start) / 86_400_000), 42);
+});
+
+test('an invitation awaiting me offers accept, decline and another time', () => {
+  const html = renderCalendarPage({ calendar: cal({ selected: { id: 's1', session: invite } }), friends: [bola],
+    features: { together: true } });
+  assert.match(html, /data-buddy-action="session-accept"/);
+  assert.match(html, /data-buddy-action="session-decline"/);
+  assert.match(html, /Suggest another time/);
+  assert.doesNotMatch(html, /Start workout together/);
+});
+
+test('a confirmed, joinable workout links to the shared workout room', () => {
+  const html = renderCalendarPage({
+    calendar: cal({ selected: { id: 's1', session: { ...invite, status: 'accepted', awaiting_me: false, can_join: true } } }),
+    friends: [bola], features: { together: true },
+  });
+  assert.match(html, /href="#\/together\?session=s1"/);
+  assert.match(html, /Cancel workout/);
+});
+
+test('invite form switches between now and a scheduled time', () => {
+  const now = renderCalendarPage({ calendar: cal({ form: { open: true, values: { mode: 'instant', with: 'bola' }, error: '' } }), friends: [bola] });
+  assert.match(now, /Work out together now/);
+  assert.doesNotMatch(now, /name="date"/);
+  const later = renderCalendarPage({ calendar: cal({ form: { open: true, values: { mode: 'scheduled' }, error: '' } }), friends: [bola] });
+  assert.match(later, /name="date"/);
+  assert.match(later, /name="time"/);
+});

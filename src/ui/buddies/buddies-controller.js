@@ -4,10 +4,26 @@
  * authenticated API client and asks the shell to re-render through changed().
  */
 import { FRIEND_TABS, renderFriendsPage } from './friends-page.js';
+import { CALENDAR_VIEWS, isoDate, monthGridRange, parseIsoDate, renderCalendarPage, weekRange } from './calendar-page.js';
 import { renderMessagesPage } from './messages-page.js';
 import { renderNotificationsPage } from './notifications-page.js';
 
-export const BUDDY_ROUTES = new Set(['buddies', 'notifications', 'messages']);
+export const BUDDY_ROUTES = new Set(['buddies', 'notifications', 'messages', 'calendar']);
+
+function emptyCalendar() {
+  return {
+    view: 'month', date: '', range: { key: '', sessions: null, error: '' },
+    lists: { upcoming: null, pending: null, past: null, cancelled: null },
+    selected: null, form: { open: false, values: {}, error: '' },
+  };
+}
+
+function localDateTimeIso(date, time) {
+  const [y, m, d] = String(date).split('-').map(Number);
+  const [hh, mm] = String(time).split(':').map(Number);
+  if (!y || !m || !d || Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  return new Date(y, m - 1, d, hh, mm).toISOString();
+}
 
 function clientId() {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -30,7 +46,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     search: { q: '', results: null, loading: false, error: '' },
     profile: null,
     notifications: { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false },
-    counts: { notifications: 0, requests: 0, messages: 0 },
+    counts: { notifications: 0, requests: 0, messages: 0, invites: 0 },
+    calendar: emptyCalendar(),
     chat: { conversations: null, unread: 0, loading: false, error: '', thread: null },
     share: null,
     online: new Set(),
@@ -139,7 +156,80 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     const [notes, messages] = await Promise.allSettled([buddiesApi.unreadCount(), buddiesApi.unreadMessages?.()]);
     if (notes.status === 'fulfilled') state.counts.notifications = notes.value.unread;
     if (messages.status === 'fulfilled' && messages.value) state.counts.messages = messages.value.unread;
+    void loadInvites();
     changed();
+  }
+
+  // ------------------------------------------------------------ calendar
+  async function loadInvites() {
+    try {
+      const { sessions } = await buddiesApi.sessions?.({ view: 'pending' }) ?? { sessions: null };
+      if (!sessions) return;
+      state.calendar.lists.pending = sessions;
+      state.counts.invites = sessions.filter((s) => s.awaiting_me).length;
+      changed();
+    } catch {
+      /* best effort */
+    }
+  }
+
+  async function loadCalendarData() {
+    const cal = state.calendar;
+    if (cal.view === 'month' || cal.view === 'week') {
+      const anchor = parseIsoDate(cal.date);
+      const { start, end } = cal.view === 'month' ? monthGridRange(anchor) : weekRange(anchor);
+      const key = `${start.toISOString()}|${end.toISOString()}`;
+      if (cal.range.key !== key) cal.range = { key, sessions: null, error: '' };
+      changed();
+      try {
+        const { sessions } = await buddiesApi.sessions({ from: start.toISOString(), to: end.toISOString() });
+        if (cal.range.key === key) cal.range.sessions = sessions;
+      } catch (error) {
+        if (cal.range.key === key) cal.range.error = describe(error);
+      }
+    } else {
+      try {
+        const { sessions } = await buddiesApi.sessions({ view: cal.view });
+        cal.lists[cal.view] = sessions;
+      } catch (error) {
+        setMessage('', describe(error));
+      }
+    }
+    changed();
+  }
+
+  async function loadSelected(sessionId) {
+    const cal = state.calendar;
+    if (!sessionId) {
+      cal.selected = null;
+      return;
+    }
+    if (cal.selected?.id !== sessionId) cal.selected = { id: sessionId, session: null, error: '' };
+    changed();
+    try {
+      const { session } = await buddiesApi.session(sessionId);
+      if (cal.selected?.id === sessionId) cal.selected.session = session;
+    } catch (error) {
+      if (cal.selected?.id === sessionId) cal.selected.error = describe(error);
+    }
+    changed();
+  }
+
+  function refreshCalendar() {
+    void loadInvites();
+    if (route.name === 'calendar') {
+      void loadCalendarData();
+      if (state.calendar.selected) void loadSelected(state.calendar.selected.id);
+    }
+  }
+
+  async function sessionAction(sessionId, work, success) {
+    await act(`session:${sessionId}`, async () => {
+      const { session } = await work();
+      if (state.calendar.selected?.id === sessionId) state.calendar.selected.session = session;
+      refreshCalendar();
+      return session;
+    }, success);
   }
 
   // ------------------------------------------------------------ chat
@@ -316,6 +406,26 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       case 'notifications':
         void loadNotifications();
         break;
+      case 'calendar': {
+        const cal = state.calendar;
+        cal.view = CALENDAR_VIEWS.includes(route.params.view) ? route.params.view : 'month';
+        cal.date = route.params.date || isoDate(new Date());
+        if (route.params.new) {
+          const keep = cal.form.open ? cal.form.values : {};
+          cal.form = {
+            open: true, error: '',
+            values: { ...keep, mode: route.params.new === 'scheduled' ? 'scheduled' : 'instant', with: route.params.with,
+              exercise_id: route.params.exercise ?? keep.exercise_id, target: route.params.target ?? keep.target },
+          };
+        } else {
+          cal.form = { open: false, values: {}, error: '' };
+        }
+        if (!state.friends.data) void loadFriends({ quiet: true });
+        void loadSelected(route.params.session);
+        void loadCalendarData();
+        void loadInvites();
+        break;
+      }
       case 'messages': {
         void loadConversations({ quiet: Boolean(state.chat.conversations) });
         if (!state.friends.data) void loadFriends({ quiet: true });
@@ -448,6 +558,21 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       case 'more-notifications':
         void loadNotifications({ append: true });
         return true;
+      case 'retry-session':
+        if (state.calendar.selected) void loadSelected(state.calendar.selected.id);
+        return true;
+      case 'session-accept':
+        void sessionAction(id, () => buddiesApi.respondSession(id, 'accept'), 'Workout accepted — it’s in both your calendars.');
+        return true;
+      case 'session-decline':
+        void sessionAction(id, () => buddiesApi.respondSession(id, 'decline'), 'Invitation declined.');
+        return true;
+      case 'session-cancel':
+        if (needsConfirm(target, `session-cancel:${id}`)) {
+          return true;
+        }
+        void sessionAction(id, () => buddiesApi.respondSession(id, 'cancel'), 'Workout cancelled. Your friend has been told.');
+        return true;
       case 'retry-thread':
         if (state.chat.thread) {
           const { username: name } = state.chat.thread;
@@ -526,6 +651,46 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
           await afterFriendChange();
         }, 'Thanks — our team will review your report.');
         break;
+      case 'create-session': {
+        const cal = state.calendar;
+        cal.form.values = { ...cal.form.values, ...values };
+        const target = Number(values.target);
+        let scheduledAt = null;
+        if (values.mode === 'scheduled') {
+          scheduledAt = localDateTimeIso(values.date, values.time);
+          if (!scheduledAt || new Date(scheduledAt).getTime() < Date.now() + 5 * 60_000) {
+            cal.form.error = 'Choose a date and time at least 5 minutes from now.';
+            changed();
+            return true;
+          }
+        }
+        if (!Number.isInteger(target) || target < 1) {
+          cal.form.error = 'Choose a target of at least 1.';
+          changed();
+          return true;
+        }
+        cal.form.error = '';
+        void act('create-session', async () => {
+          const { session } = await buddiesApi.createSession({
+            friend_id: values.friend_id, exercise_id: values.exercise_id, target, mode: values.mode,
+            scheduled_at: scheduledAt, message: values.message || null,
+          });
+          cal.form = { open: false, values: {}, error: '' };
+          view?.history?.replaceState?.(view.history.state, '', `#/calendar?session=${session.id}&view=${values.mode === 'scheduled' ? 'month' : 'pending'}`);
+          route = { name: 'calendar', params: { session: session.id } };
+          cal.selected = { id: session.id, session, error: '' };
+          refreshCalendar();
+          return session;
+        }, (session) => `Invitation sent to ${session.partner?.first_name ?? 'your friend'}.`);
+        break;
+      }
+      case 'reschedule': {
+        const when = localDateTimeIso(values.date, values.time);
+        if (!when) return true;
+        void sessionAction(values.session_id, () => buddiesApi.rescheduleSession(values.session_id, when),
+          'New time sent. Your friend needs to accept it.');
+        break;
+      }
       case 'send-message': {
         const text = String(values.body ?? '').trim();
         if (!text) return true;
@@ -559,6 +724,18 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
         return false;
     }
     return true;
+  }
+
+  function handleChange(event) {
+    const input = event.target;
+    if (input?.dataset && 'buddyMode' in input.dataset) {
+      const form = input.form;
+      const values = form ? formValues(form) : {};
+      state.calendar.form.values = { ...state.calendar.form.values, ...values, mode: input.value };
+      changed();
+      return true;
+    }
+    return false;
   }
 
   let typingSentAt = 0;
@@ -626,6 +803,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       void loadFriends({ quiet: true });
     });
     realtime.on('chat.message', onChatMessage);
+    realtime.on('session.updated', () => refreshCalendar());
     realtime.on('chat.read', (data) => {
       const thread = state.chat.thread;
       if (thread?.friend?.id === data.reader_id) {
@@ -661,6 +839,10 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     if (name === 'notifications') {
       return renderNotificationsPage({ ...state.notifications, ...shared });
     }
+    if (name === 'calendar') {
+      return renderCalendarPage({ calendar: state.calendar, friends: state.friends.data?.friends ?? [],
+        connection: state.connection, features, confirm: state.confirm, ...shared });
+    }
     if (name === 'messages') {
       return renderMessagesPage({
         me: getUser(), chat: state.chat, friends: state.friends.data?.friends ?? [], online: state.online,
@@ -684,7 +866,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     state.search = { q: '', results: null, loading: false, error: '' };
     state.profile = null;
     state.notifications = { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false };
-    state.counts = { notifications: 0, requests: 0, messages: 0 };
+    state.counts = { notifications: 0, requests: 0, messages: 0, invites: 0 };
+    state.calendar = emptyCalendar();
     state.chat = { conversations: null, unread: 0, loading: false, error: '', thread: null };
     state.share = null;
     state.online = new Set();
@@ -701,6 +884,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     handleSubmit,
     handleInput,
     handleKeydown,
+    handleChange,
     afterRender,
     refreshCounts,
     loadFriends,

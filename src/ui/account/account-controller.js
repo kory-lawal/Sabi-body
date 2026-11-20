@@ -718,6 +718,9 @@ export function createAccountController({
   }
 
   function handleChange(event) {
+    if (buddies?.handleChange?.(event)) {
+      return true;
+    }
     const control = event.target;
     if (control?.dataset?.reminderToggle === 'email_reminders_enabled') {
       const slots = control.form?.querySelector?.('[data-reminder-slots]');
