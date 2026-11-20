@@ -33,6 +33,8 @@ import { createVoiceClient } from '../services/voice-client.js';
 import { createAccountData } from '../services/account-data.js';
 import { createAuthService } from '../services/auth-service.js';
 import { createAccountController } from './account/account-controller.js';
+import { createBuddiesController } from './buddies/buddies-controller.js';
+import { createBuddiesApi } from '../services/buddies-api.js';
 import { EXERCISES } from './exercise-content.js';
 
 const MOBILE_WORKOUT_QUERY =
@@ -1407,9 +1409,12 @@ function navLinksMarkup(account) {
   }
   const authenticated = account.status === 'authenticated';
   const items = [['home', 'Home', '#/'], ['exercises', 'Exercises', '#/exercises']];
+  const badges = account.badges ?? {};
   if (authenticated) {
     items.push(
       ['dashboard', 'Dashboard', '#/dashboard'],
+      ['buddies', 'Buddies', '#/buddies', badges.requests],
+      ['notifications', 'Notifications', '#/notifications', badges.notifications],
       ['history', 'Workout History', '#/history'],
       ['profile', 'Profile', '#/profile'],
       ['settings', 'Settings', '#/settings'],
@@ -1420,7 +1425,7 @@ function navLinksMarkup(account) {
   }
   return `
     <nav class="app-nav" aria-label="Main navigation">
-      ${items.map(([id, label, href]) => `<a class="app-nav__link${account.route === id ? ' is-active' : ''}" href="${href}"${account.route === id ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+      ${items.map(([id, label, href, count]) => `<a class="app-nav__link${account.route === id ? ' is-active' : ''}" href="${href}"${account.route === id ? ' aria-current="page"' : ''}>${label}${count ? ` <span class="count-pill" aria-label="${count} new">${count > 99 ? '99+' : count}</span>` : ''}</a>`).join('')}
     </nav>`;
 }
 
@@ -2127,9 +2132,18 @@ export function mountApp(root, {
   let controller;
   let lastRouteName = null;
   const authService = accounts ? (providedAuthService ?? createAuthService()) : null;
+  const buddiesController = authService
+    ? createBuddiesController({
+      buddiesApi: createBuddiesApi(authService.api),
+      getUser: () => authService.getState().user,
+      refreshUser: () => authService.refreshUser(),
+      view: ownerDocument?.defaultView ?? globalThis,
+    })
+    : null;
   const accountController = authService
     ? createAccountController({
       authService,
+      buddies: buddiesController,
       accountData: providedAccountData ?? createAccountData(authService.api),
       view: ownerDocument?.defaultView ?? globalThis,
       requestRender: () => {
@@ -2149,6 +2163,7 @@ export function mountApp(root, {
       user: accountController.user(),
       route: accountController.route().name,
       save: accountController.saveState(),
+      badges: accountController.badges?.() ?? null,
     };
   }
   function setMobileSettingsOpen(open) {

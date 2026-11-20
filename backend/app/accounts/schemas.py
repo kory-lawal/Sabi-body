@@ -74,6 +74,7 @@ class UserOut(BaseModel):
     id: uuid.UUID
     full_name: str
     email: str
+    username: str
     email_verified: bool
     created_at: datetime
     is_admin: bool = False
@@ -88,3 +89,7 @@ class SessionOut(BaseModel):
 
 class MessageOut(BaseModel):
     message: str
+
+
+class UpdateUsernameRequest(StrictModel):
+    username: str = Field(min_length=1, max_length=40)

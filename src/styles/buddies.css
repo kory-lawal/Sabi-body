@@ -1,0 +1,291 @@
+/*
+ * SabiBody Buddies: friends, notifications, chat, calendar, challenges and the
+ * shared workout room. Mobile-first, using the tokens from styles.css and
+ * accounts.css. Nothing here changes the single-player workout screen.
+ */
+
+/* ------------------------------------------------------------------ shared bits */
+.count-pill {
+  display: inline-grid;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  place-items: center;
+  margin-left: 0.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  color: var(--white);
+  background: var(--forest);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.handle-chip {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--white);
+  font-weight: 800;
+}
+
+.buddy-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+  scrollbar-width: none;
+}
+
+.buddy-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.buddy-tabs__tab {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--white);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.buddy-tabs__tab.is-active {
+  border-color: var(--forest);
+  color: var(--white);
+  background: var(--forest);
+}
+
+.buddy-tabs__tab.is-active .count-pill {
+  color: var(--forest-deep);
+  background: var(--lime);
+}
+
+.buddy-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.buddy-empty {
+  display: grid;
+  justify-items: center;
+  gap: 0.6rem;
+  padding: 2rem 1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.buddy-empty__title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.buddy-empty__body {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--muted);
+}
+
+.person-line {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.person-line__text {
+  display: grid;
+  min-width: 0;
+}
+
+.person-line__name {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-line__handle {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.confirm-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.button--danger-text {
+  color: var(--danger);
+}
+
+.check-row {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.check-row input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--forest);
+}
+
+/* ------------------------------------------------------------------ friends */
+.friend-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.friend-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.friend-card__main {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.friend-card__meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.friend-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.friend-card__more {
+  grid-column: 1 / -1;
+}
+
+.friend-card__more > summary {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  color: var(--forest);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.friend-card__menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.friend-card__menu .disclosure {
+  flex-basis: 100%;
+}
+
+.buddy-search {
+  align-items: end;
+}
+
+.buddy-profile {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+@media (min-width: 600px) {
+  .friend-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .friend-card__actions {
+    justify-content: flex-end;
+  }
+}
+
+/* ------------------------------------------------------------------ notifications */
+.notification-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification + .notification {
+  border-top: 1px solid var(--line);
+}
+
+.notification__link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.5rem;
+  padding: 0.7rem 0.35rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.notification__link:hover,
+.notification__link:focus-visible {
+  background: var(--paper);
+}
+
+.notification.is-unread .notification__text {
+  font-weight: 800;
+}
+
+.notification__time {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.notification__dot {
+  grid-column: 3;
+  justify-self: end;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--forest);
+}
+
+.pref-list {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pref-heading {
+  margin: 1rem 0 0.25rem;
+  font-size: 1rem;
+}

@@ -374,6 +374,14 @@ export function renderSettings({ user, reminders, sessions, emailDelivery, pendi
         ${user.email_verified ? '<span class="badge badge--success">Verified</span>' : '<span class="badge badge--warning">Not verified</span>'}
       </div>
       ${nameForm({ user, pending, idPrefix: 'settings' })}
+      <form class="form form--inline" data-acct-form="update-username" novalidate>
+        <div class="field">
+          <label class="field__label" for="settings-username">Username</label>
+          <input class="field__input" id="settings-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20" value="${escapeHtml(user.username ?? '')}" required />
+          <p class="field__hint">Friends find you with this. 3–20 lowercase letters, numbers or underscores. You can change it once a week.</p>
+        </div>
+        <button class="button button--primary" type="submit"${pending === 'update-username' ? ' disabled aria-busy="true"' : ''}>${pending === 'update-username' ? 'Saving…' : 'Save username'}</button>
+      </form>
       <details class="disclosure">
         <summary>Change email address</summary>
         <form class="form" data-acct-form="change-email" novalidate>
