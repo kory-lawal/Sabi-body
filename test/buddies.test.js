@@ -73,7 +73,7 @@ test('controller sends a request and requires confirmation before removing a fri
   const controller = createBuddiesController({ buddiesApi: api, getUser: () => ada });
   let renders = 0;
   controller.setChangeListener(() => { renders += 1; });
-  controller.load({ name: 'buddies', params: {} });
+  controller.load({ name: 'buddies', params: { tab: 'friends' } });
   await flush();
 
   assert.equal(controller.handleClick(click({ buddyAction: 'send-request', username: 'bola' })), true);
@@ -84,7 +84,7 @@ test('controller sends a request and requires confirmation before removing a fri
 
   controller.handleClick(click({ buddyAction: 'remove-friend', id: 'b1' }));
   assert.equal(api.calls.some((c) => c[0] === 'remove'), false, 'first click only asks for confirmation');
-  assert.match(controller.render('buddies', {}), /Yes, remove/);
+  assert.match(controller.render('buddies', { tab: 'friends' }), /Yes, remove/);
   controller.handleClick(click({ buddyAction: 'remove-friend', id: 'b1', confirmed: 'true' }));
   await flush();
   assert.equal(api.calls.some((c) => c[0] === 'remove'), true);

@@ -1418,13 +1418,10 @@ function navLinksMarkup(account) {
   if (authenticated) {
     items.push(
       ['dashboard', 'Dashboard', '#/dashboard'],
-      ['buddies', 'Buddies', '#/buddies', badges.requests],
+      ['buddies', 'Buddies', '#/buddies', (badges.requests ?? 0) + (badges.challenges ?? 0)],
       ['calendar', 'Calendar', '#/calendar', badges.invites],
       ['messages', 'Messages', '#/messages', badges.messages],
-      ['challenges', 'Challenges', '#/challenges', badges.challenges],
-      ['notifications', 'Notifications', '#/notifications', badges.notifications],
-      ['history', 'Workout History', '#/history'],
-      ['profile', 'Profile', '#/profile'],
+      ['history', 'History', '#/history'],
       ['settings', 'Settings', '#/settings'],
     );
     if (account.user?.is_admin) {
@@ -1443,8 +1440,12 @@ function accountActionsMarkup(account) {
   }
   if (account.status === 'authenticated') {
     const name = account.user?.full_name ?? '';
+    const unread = account.badges?.notifications ?? 0;
     return `
       <div class="app-nav__account">
+        <a class="app-nav__bell${account.route === 'notifications' ? ' is-active' : ''}" href="#/notifications" aria-label="Notifications${unread ? ` (${unread} unread)` : ''}">
+          <span aria-hidden="true">🔔</span>${unread ? `<span class="count-pill count-pill--bell" aria-hidden="true">${unread > 99 ? '99+' : unread}</span>` : ''}
+        </a>
         <a class="app-nav__user" href="#/profile" aria-label="Your profile: ${escapeHtml(name)}">
           <span class="avatar avatar--sm" aria-hidden="true">${escapeHtml(accountInitials(name))}</span>
           <span class="app-nav__user-name">${escapeHtml(name.split(/\s+/)[0] || 'Profile')}</span>
@@ -1563,13 +1564,26 @@ function buddyShareMarkup(state) {
         </div>`;
 }
 
+function liveInviteMarkup(state) {
+  const waiting = state.account?.badges?.waiting;
+  if (!waiting || state.account?.status !== 'authenticated') {
+    return '';
+  }
+  return `
+      <a class="live-strip" href="#/together?session=${encodeURIComponent(waiting.sessionId)}">
+        <span class="live-strip__dot" aria-hidden="true"></span>
+        <span><strong>${escapeHtml(waiting.name)}</strong> is waiting for you in your workout room.</span>
+        <span class="live-strip__cta">Join now →</span>
+      </a>`;
+}
+
 function siteHeaderMarkup(state) {
   return `
       <header class="site-header">
         ${brandLogoMarkup()}
         <p class="tagline">The sabi-sabi fitness coach</p>
         ${mobileSettingsMarkup(state)}
-      </header>`;
+      </header>${liveInviteMarkup(state)}`;
 }
 
 function heroAccountMarkup(account) {
@@ -2310,7 +2324,7 @@ export function mountApp(root, {
     ownerDocument?.body?.classList?.toggle('duo-active', false);
     const workoutBusy = ['loading', 'running', 'paused', 'completed'].includes(state.workoutStatus);
     const showAccountPage = Boolean(accountController?.isActive()) && state.view === 'home' && !workoutBusy;
-    const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}` : '';
+    const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}:${account.badges?.waiting?.sessionId ?? ''}` : '';
     const screen = showAccountPage
       ? `account:${accountController.version()}`
       : state.view === 'home'
@@ -2445,6 +2459,7 @@ export function mountApp(root, {
     if (!sharedWorkout) return;
     const route = parseRoute((ownerDocument?.defaultView ?? globalThis).location?.hash ?? '');
     if (route.name === 'together') {
+      buddiesController?.clearWaiting(route.params.session);
       if (authService.getState().status === 'authenticated' && route.params.session
         && sharedWorkout.sessionId() !== route.params.session) {
         void sharedWorkout.enter(route.params.session);

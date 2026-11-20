@@ -158,6 +158,7 @@ export function renderFriendsPage({ me, tab = 'friends', data, loading, error, s
       <a class="button button--quiet button--small" href="#/settings?section=account">Change username</a>`,
   });
   const nav = tabs([
+    { id: 'home', title: 'Overview', href: '#/buddies' },
     { id: 'friends', title: `My friends${data ? ` (${data.friends.length})` : ''}`, href: '#/buddies?tab=friends' },
     { id: 'streaks', title: 'Streaks', href: '#/buddies?tab=streaks' },
     { id: 'requests', title: 'Requests', href: '#/buddies?tab=requests', count: incomingCount },

@@ -1714,3 +1714,253 @@ body.duo-active {
   flex-wrap: wrap;
   border-radius: 1.2rem;
 }
+
+/* ------------------------------------------------------------------ Buddies hub */
+.buddy-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.buddy-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.1rem 0.6rem;
+  min-height: 4rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  color: var(--ink);
+  background: var(--card);
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.buddy-action:hover,
+.buddy-action:focus-visible {
+  border-color: var(--forest);
+}
+
+.buddy-action:first-child {
+  color: var(--white);
+  background: var(--forest);
+}
+
+.buddy-action:first-child .buddy-action__hint {
+  color: rgb(255 255 255 / 0.8);
+}
+
+.buddy-action__icon {
+  grid-row: span 2;
+  font-size: 1.4rem;
+}
+
+.buddy-action__label {
+  font-weight: 800;
+}
+
+.buddy-action__hint {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.hub-card {
+  display: grid;
+  align-content: start;
+  gap: 0.6rem;
+}
+
+.hub-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.hub-card__head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.hub-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hub-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+}
+
+.hub-row + .hub-row {
+  border-top: 1px solid var(--line);
+}
+
+.hub-row__text {
+  min-width: 0;
+}
+
+.hub-row__title,
+.hub-row__meta {
+  margin: 0;
+}
+
+.hub-row__meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 0.4rem;
+}
+
+.hub-row__actions:empty {
+  display: none;
+}
+
+.hub-friends {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hub-friend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.hub-friend__online {
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.hub-note {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+}
+
+@media (min-width: 600px) {
+  .buddy-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hub-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .hub-row__actions {
+    grid-column: auto;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1024px) {
+  .buddy-actions {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .buddy-action {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .buddy-action__icon {
+    grid-row: auto;
+  }
+
+  .hub-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ------------------------------------------------------------------ header extras */
+.app-nav__bell {
+  position: relative;
+  display: inline-grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ink);
+  font-size: 1.15rem;
+  text-decoration: none;
+}
+
+.app-nav__bell:hover,
+.app-nav__bell.is-active {
+  background: var(--paper);
+}
+
+.count-pill--bell {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.05rem;
+  margin: 0;
+}
+
+.live-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 var(--page-gutter, 1rem) 0.75rem;
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-card);
+  color: var(--white);
+  background: var(--forest);
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.live-strip__dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--lime);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+.live-strip__cta {
+  margin-left: auto;
+  color: var(--lime);
+  font-weight: 800;
+}
+
+@keyframes live-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-strip__dot {
+    animation: none;
+  }
+}

@@ -173,6 +173,26 @@ async def _handle(conn: Connection, message: dict) -> None:
                           "error": {"code": "server_error", "message": "Something went wrong."}})
 
 
+async def _watchdog(conn: Connection) -> None:
+    """Warns before the access token expires and closes expired or silent sockets.
+
+    Runs beside the receive loop so receives are never cancelled mid-flight."""
+    while not conn.closed:
+        await asyncio.sleep(RECEIVE_TICK)
+        now_wall = time.time()
+        code = None
+        if conn.token_exp + EXPIRY_GRACE < now_wall:
+            code = 4401
+        elif time.monotonic() - conn.last_seen > IDLE_TIMEOUT:
+            code = 4408
+        elif not conn.expiry_warned and conn.token_exp - EXPIRY_WARNING < now_wall:
+            conn.expiry_warned = True
+            conn.enqueue({"type": "auth.expiring", "data": {"expires_at": conn.token_exp}})
+        if code:
+            conn.enqueue({"type": "__close__", "code": code})
+            return
+
+
 @router.websocket("/ws")
 async def realtime_socket(websocket: WebSocket) -> None:
     if not origin_allowed(websocket.headers.get("origin")):
@@ -205,24 +225,10 @@ async def realtime_socket(websocket: WebSocket) -> None:
     if first_socket:
         await _presence(user_id, True)
 
+    watchdog = asyncio.create_task(_watchdog(conn))
     try:
         while not conn.closed:
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), RECEIVE_TICK)
-            except asyncio.TimeoutError:
-                raw = None
-            now_wall = time.time()
-            if conn.token_exp + EXPIRY_GRACE < now_wall:
-                await websocket.close(code=4401)
-                break
-            if not conn.expiry_warned and conn.token_exp - EXPIRY_WARNING < now_wall:
-                conn.expiry_warned = True
-                conn.enqueue({"type": "auth.expiring", "data": {"expires_at": conn.token_exp}})
-            if raw is None:
-                if time.monotonic() - conn.last_seen > IDLE_TIMEOUT:
-                    await websocket.close(code=4408)
-                    break
-                continue
+            raw = await websocket.receive_text()
             conn.last_seen = time.monotonic()
             if len(raw) > MAX_FRAME:
                 conn.enqueue({"type": "error", "data": {"code": "frame_too_large"}})
@@ -240,6 +246,7 @@ async def realtime_socket(websocket: WebSocket) -> None:
     finally:
         last = registry.remove(conn)
         writer.cancel()
+        watchdog.cancel()
         for hook in registry.disconnect_hooks:
             try:
                 await hook(conn)

@@ -142,3 +142,31 @@ class FriendsTests(BuddiesTestCase):
     def test_unauthenticated_access_is_rejected(self):
         for path in ("/api/friends", "/api/users/search?q=bo", "/api/notifications"):
             self.assertEqual(self.client.get(path).status_code, 401)
+
+
+class DashboardTests(BuddiesTestCase):
+    def setUp(self):
+        super().setUp()
+        self.ada = self.make_user("ada.obi@example.com", "Ada Obi")
+        self.bola = self.make_user("bola@example.com", "Bola Ade")
+
+    def get(self, path, who):
+        return self.client.get(path, headers=who["h"])
+
+    def test_dashboard_aggregates_everything_for_the_hub(self):
+        self.befriend(self.ada, self.bola)
+        self.client.post("/api/shared-sessions", headers=self.bola["h"], json={
+            "friend_id": self.ada["user"]["id"], "exercise_id": "squats", "target": 15, "mode": "instant"})
+        self.client.post("/api/workouts", json=self.workout_body(), headers=self.bola["h"])
+        data = self.get("/api/buddies/dashboard", self.ada).json()
+        self.assertEqual(data["friends"][0]["username"], "bola")
+        self.assertIn("streak", data["friends"][0])
+        self.assertEqual(len(data["invitations"]), 1)
+        self.assertEqual(data["activity"][0]["exercise_name"], "Push-ups")
+        self.assertNotIn("completed_reps", data["activity"][0])  # activity only, no workout details
+        self.assertGreaterEqual(data["unread"]["notifications"], 1)
+        # A stranger's activity never appears.
+        stranger = self.make_user("chidi@example.com", "Chidi Eze")
+        self.client.post("/api/workouts", json=self.workout_body(), headers=stranger["h"])
+        names = [a["user"]["username"] for a in self.get("/api/buddies/dashboard", self.ada).json()["activity"]]
+        self.assertNotIn(stranger["user"]["username"], names)

@@ -6,6 +6,7 @@
 import { FRIEND_TABS, renderFriendsPage } from './friends-page.js';
 import { CALENDAR_VIEWS, isoDate, monthGridRange, parseIsoDate, renderCalendarPage, weekRange } from './calendar-page.js';
 import { deadlineFromPreset, renderChallengesPage } from './challenges-page.js';
+import { renderBuddiesDashboard } from './dashboard-page.js';
 import { renderMessagesPage } from './messages-page.js';
 import { renderNotificationsPage } from './notifications-page.js';
 
@@ -50,6 +51,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     counts: { notifications: 0, requests: 0, messages: 0, invites: 0, challenges: 0 },
     calendar: emptyCalendar(),
     streaks: { streaks: null, error: '' },
+    dashboard: { data: null, error: '' },
+    waiting: null,
     challenges: { data: null, error: '', form: { open: false, values: {}, error: '' } },
     chat: { conversations: null, unread: 0, loading: false, error: '', thread: null },
     share: null,
@@ -175,6 +178,26 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     changed();
   }
 
+  async function loadDashboard() {
+    if (!buddiesApi.dashboard) return;
+    try {
+      const data = await buddiesApi.dashboard();
+      state.dashboard = { data, error: '' };
+      state.counts.requests = data.requests.incoming.length;
+      state.counts.invites = data.invitations.length;
+      state.counts.messages = data.unread.messages;
+      state.counts.notifications = data.unread.notifications;
+      state.counts.challenges = data.challenges.received.length;
+    } catch (error) {
+      state.dashboard.error = describe(error);
+    }
+    changed();
+  }
+
+  function onDashboard() {
+    return route.name === 'buddies' && !route.params.tab;
+  }
+
   async function loadStreaks() {
     try {
       const { streaks } = await buddiesApi.streaks();
@@ -242,6 +265,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
 
   function refreshCalendar() {
     void loadInvites();
+    if (onDashboard()) void loadDashboard();
     if (route.name === 'calendar') {
       void loadCalendarData();
       if (state.calendar.selected) void loadSelected(state.calendar.selected.id);
@@ -423,6 +447,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     switch (route.name) {
       case 'buddies': {
         void loadFriends({ quiet: Boolean(state.friends.data) });
+        if (!route.params.tab) void loadDashboard();
         if (route.params.tab === 'streaks') void loadStreaks();
         if (route.params.tab === 'find') {
           void loadProfile(route.params.view);
@@ -885,12 +910,27 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     });
     realtime.on('friends.changed', () => {
       void loadFriends({ quiet: true });
+      if (onDashboard()) void loadDashboard();
     });
     realtime.on('chat.message', onChatMessage);
     realtime.on('session.updated', () => refreshCalendar());
-    realtime.on('challenge.updated', () => void loadChallenges());
+    realtime.on('challenge.updated', () => {
+      void loadChallenges();
+      if (onDashboard()) void loadDashboard();
+    });
+    realtime.on('room.waiting', (data) => {
+      state.waiting = { sessionId: data.session_id, name: data.user?.first_name ?? 'Your friend', at: Date.now() };
+      changed();
+      setTimeout(() => {
+        if (state.waiting?.sessionId === data.session_id) {
+          state.waiting = null;
+          changed();
+        }
+      }, 10 * 60_000);
+    });
     realtime.on('streaks.changed', () => {
       void loadFriends({ quiet: true });
+      if (onDashboard()) void loadDashboard();
       if (route.name === 'buddies' && route.params.tab === 'streaks') void loadStreaks();
     });
     realtime.on('chat.read', (data) => {
@@ -918,6 +958,10 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
   // ------------------------------------------------------------ rendering
   function render(name, params) {
     const shared = { pending: state.pending, message: state.message, failure: state.failure };
+    if (name === 'buddies' && !params.tab) {
+      return renderBuddiesDashboard({ me: getUser(), ...state.dashboard, dashboard: state.dashboard.data,
+        counts: state.counts, online: state.online, ...shared });
+    }
     if (name === 'buddies') {
       const tab = FRIEND_TABS.includes(params.tab) ? params.tab : 'friends';
       return renderFriendsPage({
@@ -959,6 +1003,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     state.profile = null;
     state.notifications = { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false };
     state.counts = { notifications: 0, requests: 0, messages: 0, invites: 0, challenges: 0 };
+    state.dashboard = { data: null, error: '' };
+    state.waiting = null;
     state.challenges = { data: null, error: '', form: { open: false, values: {}, error: '' } };
     state.calendar = emptyCalendar();
     state.chat = { conversations: null, unread: 0, loading: false, error: '', thread: null };
@@ -981,7 +1027,13 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     afterRender,
     refreshCounts,
     loadFriends,
-    counts: () => ({ ...state.counts }),
+    counts: () => ({ ...state.counts, waiting: state.waiting }),
+    clearWaiting(sessionId) {
+      if (state.waiting && (!sessionId || state.waiting.sessionId === sessionId)) {
+        state.waiting = null;
+        changed();
+      }
+    },
     reset,
     // Exposed for the realtime layer (phase 2) and tests.
     state,

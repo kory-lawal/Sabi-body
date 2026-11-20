@@ -56,6 +56,8 @@ export function createBuddiesApi(api) {
     createChallenge: (body) => api.post('/api/challenges', body, auth),
     respondChallenge: (challengeId, action) => api.post(`/api/challenges/${id(challengeId)}/${action}`, {}, auth),
 
+    dashboard: () => api.get('/api/buddies/dashboard', auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),
