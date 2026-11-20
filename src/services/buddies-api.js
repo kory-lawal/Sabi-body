@@ -32,6 +32,14 @@ export function createBuddiesApi(api) {
     unblock: (userId) => api.delete(`/api/blocks/${id(userId)}`, auth),
     report: (body) => api.post('/api/reports', body, auth),
 
+    // chat
+    conversations: () => api.get('/api/conversations', auth),
+    unreadMessages: () => api.get('/api/conversations/unread', auth),
+    messages: (friendId, before) => api.get(`/api/conversations/${id(friendId)}/messages${query({ before })}`, auth),
+    sendMessage: (friendId, body) => api.post(`/api/conversations/${id(friendId)}/messages`, body, auth),
+    markConversationRead: (friendId) => api.post(`/api/conversations/${id(friendId)}/read`, {}, auth),
+    nudge: (friendId, preset) => api.post(`/api/friends/${id(friendId)}/nudge`, { preset }, auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),

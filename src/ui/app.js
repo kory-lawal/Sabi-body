@@ -1415,6 +1415,7 @@ function navLinksMarkup(account) {
     items.push(
       ['dashboard', 'Dashboard', '#/dashboard'],
       ['buddies', 'Buddies', '#/buddies', badges.requests],
+      ['messages', 'Messages', '#/messages', badges.messages],
       ['notifications', 'Notifications', '#/notifications', badges.notifications],
       ['history', 'Workout History', '#/history'],
       ['profile', 'Profile', '#/profile'],
@@ -1540,6 +1541,18 @@ function goalOptions(exerciseId, selectedTarget) {
       </label>
     </div>
   `;
+}
+
+/** Social shortcuts on the exercise screen (signed-in users only; never during a workout). */
+function buddyShareMarkup(state) {
+  if (state.account?.status !== 'authenticated') {
+    return '';
+  }
+  const id = encodeURIComponent(state.selectedExercise);
+  return `
+        <div class="buddy-share" aria-label="Exercise with friends">
+          <a class="button button--quiet button--small" href="#/messages?share=${id}">Send to a friend</a>
+        </div>`;
 }
 
 function siteHeaderMarkup(state) {
@@ -1844,6 +1857,7 @@ function renderWorkout(root, state) {
         <p class="workout-heading__eyebrow">Your movement, your pace</p>
         <h1 tabindex="-1">${exercise.name}</h1>
         <p>${exercise.instruction}</p>
+        ${buddyShareMarkup(state)}
       </div>
       <section class="exercise-instructions" aria-labelledby="exercise-instructions-title">
         <figure class="exercise-instructions__figure">
@@ -2391,6 +2405,9 @@ export function mountApp(root, {
       case 'choose-exercise':
         accountController?.clearSaveState();
         controller.selectExercise(button.dataset.exercise);
+        if (button.dataset.target) {
+          controller.setGoal(button.dataset.target);
+        }
         break;
       case 'start':
         if (isMobileWorkoutViewport()) {
@@ -2454,6 +2471,10 @@ export function mountApp(root, {
 
   root.addEventListener('submit', (event) => {
     accountController?.handleSubmit(event);
+  });
+
+  root.addEventListener('keydown', (event) => {
+    accountController?.handleKeydown?.(event);
   });
 
   root.addEventListener('change', (event) => {

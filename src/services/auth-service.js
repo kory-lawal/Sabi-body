@@ -10,6 +10,9 @@ import { ApiError, createApiClient } from './api-client.js';
 export function createAuthService({
   api = null,
   BroadcastChannelImpl = globalThis.BroadcastChannel,
+  retryDelays = [3000, 6000, 12000, 24000, 30000, 30000],
+  setTimeoutImpl = globalThis.setTimeout?.bind(globalThis),
+  view = globalThis,
 } = {}) {
   const listeners = new Set();
   let state = { status: 'checking', user: null, error: '' };
@@ -69,16 +72,46 @@ export function createAuthService({
     return session.user;
   }
 
+  let retryIndex = 0;
+  let retryTimer = null;
+
+  // A sleeping or restarting server (e.g. a Render cold start) must not look like
+  // a logout: keep retrying while the refresh cookie may still be valid.
+  function scheduleRestoreRetry() {
+    if (!setTimeoutImpl || retryTimer || retryIndex >= retryDelays.length) {
+      return;
+    }
+    const delay = retryDelays[retryIndex];
+    retryIndex += 1;
+    retryTimer = setTimeoutImpl(() => {
+      retryTimer = null;
+      if (state.status !== 'authenticated') {
+        void restore();
+      }
+    }, delay);
+    retryTimer?.unref?.(); // Node only; lets test processes exit.
+  }
+
+  view?.addEventListener?.('online', () => {
+    if (state.status !== 'authenticated' && state.error) {
+      retryIndex = 0;
+      void restore();
+    }
+  });
+
   async function restore() {
     try {
       const session = await client.refresh();
+      retryIndex = 0;
       return acceptSession(session);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setAnonymous();
       } else {
-        // Network or server problem: stay signed out for now without discarding the cookie.
+        // Network or server problem: stay signed out for now without discarding the
+        // cookie, and try again shortly.
         setAnonymous(error?.message || 'We could not restore your session.');
+        scheduleRestoreRetry();
       }
       return null;
     }

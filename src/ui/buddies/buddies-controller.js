@@ -4,9 +4,15 @@
  * authenticated API client and asks the shell to re-render through changed().
  */
 import { FRIEND_TABS, renderFriendsPage } from './friends-page.js';
+import { renderMessagesPage } from './messages-page.js';
 import { renderNotificationsPage } from './notifications-page.js';
 
-export const BUDDY_ROUTES = new Set(['buddies', 'notifications']);
+export const BUDDY_ROUTES = new Set(['buddies', 'notifications', 'messages']);
+
+function clientId() {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `c${random.replaceAll('-', '')}`.slice(0, 40);
+}
 
 function describe(error) {
   return error?.message || 'Something went wrong. Please try again.';
@@ -24,7 +30,9 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     search: { q: '', results: null, loading: false, error: '' },
     profile: null,
     notifications: { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false },
-    counts: { notifications: 0, requests: 0 },
+    counts: { notifications: 0, requests: 0, messages: 0 },
+    chat: { conversations: null, unread: 0, loading: false, error: '', thread: null },
+    share: null,
     online: new Set(),
     connection: 'idle',
     confirm: '',
@@ -127,13 +135,167 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
   }
 
   async function refreshCounts() {
-    try {
-      const { unread } = await buddiesApi.unreadCount();
-      state.counts.notifications = unread;
+    // Each count is best effort and independent of the other.
+    const [notes, messages] = await Promise.allSettled([buddiesApi.unreadCount(), buddiesApi.unreadMessages?.()]);
+    if (notes.status === 'fulfilled') state.counts.notifications = notes.value.unread;
+    if (messages.status === 'fulfilled' && messages.value) state.counts.messages = messages.value.unread;
+    changed();
+  }
+
+  // ------------------------------------------------------------ chat
+  async function loadConversations({ quiet = false } = {}) {
+    const chat = state.chat;
+    if (!quiet) {
+      chat.loading = true;
+      chat.error = '';
       changed();
-    } catch {
-      /* counts are best effort */
     }
+    try {
+      const result = await buddiesApi.conversations();
+      chat.conversations = result.conversations;
+      state.counts.messages = result.unread;
+    } catch (error) {
+      chat.error = describe(error);
+    } finally {
+      chat.loading = false;
+      changed();
+    }
+  }
+
+  async function resolveFriend(username) {
+    const fromFriends = state.friends.data?.friends?.find((f) => f.username === username);
+    if (fromFriends) return fromFriends;
+    const fromChats = state.chat.conversations?.find((c) => c.with_user.username === username)?.with_user;
+    if (fromChats) return fromChats;
+    return (await buddiesApi.profile(username)).user;
+  }
+
+  let scrollThread = false;
+
+  async function openThread(username) {
+    const chat = state.chat;
+    if (chat.thread?.username === username && chat.thread.friend) {
+      markThreadRead();
+      return;
+    }
+    chat.thread = { username, friend: null, messages: [], canSend: false, otherReadAt: null, hasMore: false,
+      loading: true, error: '', typingUntil: 0 };
+    changed();
+    try {
+      const friend = await resolveFriend(username);
+      const result = await buddiesApi.messages(friend.id);
+      if (chat.thread?.username !== username) return;
+      Object.assign(chat.thread, {
+        friend: result.with_user, messages: result.messages, canSend: result.can_send,
+        otherReadAt: result.other_read_at, hasMore: result.has_more, loading: false,
+      });
+      scrollThread = true;
+      markThreadRead();
+    } catch (error) {
+      if (chat.thread?.username === username) {
+        Object.assign(chat.thread, { loading: false, error: describe(error) });
+      }
+    }
+    changed();
+  }
+
+  async function olderMessages() {
+    const thread = state.chat.thread;
+    if (!thread?.friend || thread.loading) return;
+    thread.loading = true;
+    changed();
+    try {
+      const result = await buddiesApi.messages(thread.friend.id, thread.messages[0]?.created_at);
+      thread.messages = [...result.messages, ...thread.messages];
+      thread.hasMore = result.has_more;
+    } catch (error) {
+      setMessage('', describe(error));
+    } finally {
+      thread.loading = false;
+      changed();
+    }
+  }
+
+  let readTimer = null;
+  function markThreadRead() {
+    const thread = state.chat.thread;
+    if (!thread?.friend || route.name !== 'messages' || view?.document?.visibilityState === 'hidden') return;
+    clearTimeout(readTimer);
+    readTimer = setTimeout(async () => {
+      const convo = state.chat.conversations?.find((c) => c.with_user.id === thread.friend.id);
+      if (convo) convo.unread = 0;
+      try {
+        const result = realtime?.status() === 'open'
+          ? await realtime.request('chat.read', { friend_id: thread.friend.id })
+          : await buddiesApi.markConversationRead(thread.friend.id);
+        state.counts.messages = result.unread ?? state.counts.messages;
+      } catch {
+        /* read receipts are best effort */
+      }
+      changed();
+    }, 150);
+  }
+
+  async function deliver(friendId, payload) {
+    if (realtime?.status() === 'open') {
+      return realtime.request('chat.send', { friend_id: friendId, ...payload });
+    }
+    return buddiesApi.sendMessage(friendId, payload);
+  }
+
+  function mergeMessage(thread, message) {
+    const index = thread.messages.findIndex((m) => m.id === message.id
+      || (m.client_msg_id && m.client_msg_id === message.client_msg_id));
+    if (index >= 0) thread.messages[index] = message;
+    else thread.messages.push(message);
+  }
+
+  async function sendChat(payload) {
+    const thread = state.chat.thread;
+    if (!thread?.friend) return;
+    const me = getUser();
+    const optimistic = {
+      id: `tmp-${payload.client_msg_id}`, client_msg_id: payload.client_msg_id, sender_id: me?.id, kind: payload.kind,
+      body: payload.body, payload: payload.payload ?? {}, created_at: new Date().toISOString(), pending: true,
+    };
+    mergeMessage(thread, optimistic);
+    scrollThread = true;
+    changed();
+    try {
+      const result = await deliver(thread.friend.id, payload);
+      mergeMessage(thread, result.message);
+    } catch (error) {
+      mergeMessage(thread, { ...optimistic, pending: false, failed: true, retry: payload });
+      setMessage('', describe(error));
+    }
+    changed();
+  }
+
+  function onChatMessage(data) {
+    const message = data.message;
+    const me = getUser();
+    const withUser = data.with_user;
+    const thread = state.chat.thread;
+    const fromFriend = message.sender_id !== me?.id;
+    const threadOpen = thread?.friend?.id === withUser && route.name === 'messages';
+    if (thread?.friend && thread.friend.id === withUser) {
+      mergeMessage(thread, message);
+      thread.typingUntil = 0;
+      scrollThread = true;
+      if (fromFriend) markThreadRead();
+    }
+    if (fromFriend && !threadOpen) {
+      state.counts.messages += 1;
+    }
+    const convo = state.chat.conversations?.find((c) => c.with_user.id === withUser);
+    if (convo) {
+      convo.last_message = message;
+      if (fromFriend && !threadOpen) convo.unread += 1;
+      state.chat.conversations = [convo, ...state.chat.conversations.filter((c) => c !== convo)];
+    } else if (state.chat.conversations) {
+      void loadConversations({ quiet: true });
+    }
+    changed();
   }
 
   function load(nextRoute) {
@@ -154,6 +316,15 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       case 'notifications':
         void loadNotifications();
         break;
+      case 'messages': {
+        void loadConversations({ quiet: Boolean(state.chat.conversations) });
+        if (!state.friends.data) void loadFriends({ quiet: true });
+        const shareId = route.params.share;
+        state.share = shareId ? { exerciseId: shareId, target: Number(route.params.target) || 20 } : null;
+        if (route.params.with) void openThread(route.params.with);
+        else state.chat.thread = null;
+        break;
+      }
       default:
         break;
     }
@@ -277,6 +448,49 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       case 'more-notifications':
         void loadNotifications({ append: true });
         return true;
+      case 'retry-thread':
+        if (state.chat.thread) {
+          const { username: name } = state.chat.thread;
+          state.chat.thread = null;
+          void openThread(name);
+        }
+        return true;
+      case 'older-messages':
+        void olderMessages();
+        return true;
+      case 'retry-message': {
+        const failed = state.chat.thread?.messages.find((m) => m.client_msg_id === id && m.failed);
+        if (failed?.retry) void sendChat(failed.retry);
+        return true;
+      }
+      case 'nudge': {
+        const friend = state.chat.thread?.friend;
+        if (!friend) return true;
+        target.closest?.('details')?.removeAttribute?.('open');
+        void act(`nudge:${id}`, async () => {
+          const result = await buddiesApi.nudge(friend.id, id);
+          mergeMessage(state.chat.thread, result.message);
+          scrollThread = true;
+        }, `Encouragement sent to ${friend.first_name}.`);
+        return true;
+      }
+      case 'share-card': {
+        const share = state.share;
+        if (!share) return true;
+        void act(`share:${id}`, async () => {
+          const friend = state.friends.data?.friends?.find((f) => f.id === id);
+          await deliver(id, { kind: 'exercise_card', body: '',
+            payload: { exercise_id: share.exerciseId, target: share.target }, client_msg_id: clientId() });
+          state.share = null;
+          if (friend) {
+            view?.history?.replaceState?.(view.history.state, '', `#/messages?with=${encodeURIComponent(friend.username)}`);
+            route = { name: 'messages', params: { with: friend.username } };
+            state.chat.thread = null;
+            void openThread(friend.username);
+          }
+        }, 'Exercise sent!');
+        return true;
+      }
       default:
         return false;
     }
@@ -312,6 +526,20 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
           await afterFriendChange();
         }, 'Thanks — our team will review your report.');
         break;
+      case 'send-message': {
+        const text = String(values.body ?? '').trim();
+        if (!text) return true;
+        const input = form.querySelector?.('[data-chat-input]');
+        if (input) input.value = '';
+        void sendChat({ kind: 'text', body: text, payload: {}, client_msg_id: clientId() });
+        input?.focus?.();
+        break;
+      }
+      case 'share-exercise':
+        form.closest?.('details')?.removeAttribute?.('open');
+        void sendChat({ kind: 'exercise_card', body: '',
+          payload: { exercise_id: values.exercise_id, target: Number(values.target) || 20 }, client_msg_id: clientId() });
+        break;
       case 'notification-preferences': {
         const prefs = state.notifications.prefs?.preferences ?? [];
         const body = {
@@ -333,8 +561,28 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     return true;
   }
 
+  let typingSentAt = 0;
+  function handleKeydown(event) {
+    const input = event.target;
+    if (!input?.dataset || !('chatInput' in input.dataset)) return false;
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      input.form?.requestSubmit?.();
+      return true;
+    }
+    return false;
+  }
+
   function handleInput(event) {
     const input = event.target;
+    if (input?.dataset && 'chatInput' in input.dataset) {
+      const friend = state.chat.thread?.friend;
+      if (friend && realtime?.status() === 'open' && Date.now() - typingSentAt > 2500 && input.value.trim()) {
+        typingSentAt = Date.now();
+        realtime.send('chat.typing', { friend_id: friend.id });
+      }
+      return true;
+    }
     if (input?.dataset && 'buddySearch' in input.dataset) {
       clearTimeout(searchTimer);
       const value = input.value;
@@ -377,6 +625,27 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     realtime.on('friends.changed', () => {
       void loadFriends({ quiet: true });
     });
+    realtime.on('chat.message', onChatMessage);
+    realtime.on('chat.read', (data) => {
+      const thread = state.chat.thread;
+      if (thread?.friend?.id === data.reader_id) {
+        thread.otherReadAt = data.read_at;
+        changed();
+      }
+    });
+    realtime.on('chat.typing', (data) => {
+      const thread = state.chat.thread;
+      if (thread?.friend?.id === data.user_id) {
+        thread.typingUntil = Date.now() + 4000;
+        changed();
+        setTimeout(changed, 4100);
+      }
+    });
+    realtime.on('chat.unread', (data) => {
+      state.counts.messages = data.unread ?? state.counts.messages;
+      if (typeof data.notifications === 'number') state.counts.notifications = data.notifications;
+      changed();
+    });
   }
 
   // ------------------------------------------------------------ rendering
@@ -392,7 +661,22 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     if (name === 'notifications') {
       return renderNotificationsPage({ ...state.notifications, ...shared });
     }
+    if (name === 'messages') {
+      return renderMessagesPage({
+        me: getUser(), chat: state.chat, friends: state.friends.data?.friends ?? [], online: state.online,
+        connection: state.connection, share: state.share, features, ...shared,
+      });
+    }
     return '';
+  }
+
+  function afterRender(root, currentRoute) {
+    if (currentRoute?.name !== 'messages') return;
+    const list = root.querySelector?.('[data-chat-thread]');
+    if (list && scrollThread) {
+      list.scrollTop = list.scrollHeight;
+      scrollThread = false;
+    }
   }
 
   function reset() {
@@ -400,7 +684,9 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     state.search = { q: '', results: null, loading: false, error: '' };
     state.profile = null;
     state.notifications = { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false };
-    state.counts = { notifications: 0, requests: 0 };
+    state.counts = { notifications: 0, requests: 0, messages: 0 };
+    state.chat = { conversations: null, unread: 0, loading: false, error: '', thread: null };
+    state.share = null;
     state.online = new Set();
   }
 
@@ -414,6 +700,8 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     handleClick,
     handleSubmit,
     handleInput,
+    handleKeydown,
+    afterRender,
     refreshCounts,
     loadFriends,
     counts: () => ({ ...state.counts }),

@@ -117,3 +117,48 @@ test('notifications describe themselves and link to the right page', () => {
   assert.match(html, /Mark all as read/);
   assert.match(html, /name="buddy_reminder_24h" checked/);
 });
+
+import { exerciseCardMarkup, renderMessagesPage } from '../src/ui/buddies/messages-page.js';
+
+test('messages page escapes text, marks own bubbles and shows Seen', () => {
+  const me = { id: 'a1' };
+  const html = renderMessagesPage({
+    me, friends: [], online: new Set(['b1']),
+    chat: {
+      conversations: [{ conversation_id: 'c1', with_user: bola, unread: 0, last_message: null }],
+      thread: {
+        username: 'bola', friend: bola, canSend: true, otherReadAt: '2026-11-20T10:05:00Z', hasMore: false,
+        messages: [
+          { id: 'm1', sender_id: 'b1', kind: 'text', body: '<script>x</script>', created_at: '2026-11-20T10:00:00Z' },
+          { id: 'm2', sender_id: 'a1', kind: 'text', body: 'Ready!', created_at: '2026-11-20T10:01:00Z' },
+        ],
+      },
+    },
+  });
+  assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>x/);
+  assert.match(html, /bubble--mine/);
+  assert.match(html, /Seen/);
+  assert.match(html, /data-buddy-form="send-message"/);
+  assert.doesNotMatch(html, /Invite to work out/, 'invite is only offered once shared workouts exist');
+});
+
+test('exercise cards only contain catalogue information', () => {
+  const html = exerciseCardMarkup({ exercise_id: 'push-ups', target: 20, completed_reps: 999 });
+  assert.match(html, /Push-ups/);
+  assert.match(html, /20 reps/);
+  assert.match(html, /data-action="choose-exercise" data-exercise="push-ups" data-target="20"/);
+  assert.doesNotMatch(html, /999/);
+});
+
+test('Enter sends a chat message, Shift+Enter adds a new line', () => {
+  const controller = createBuddiesController({ buddiesApi: fakeApi(), getUser: () => ada });
+  let submitted = 0;
+  let prevented = false;
+  const input = { dataset: { chatInput: '' }, form: { requestSubmit: () => { submitted += 1; } } };
+  assert.equal(controller.handleKeydown({ target: input, key: 'Enter', shiftKey: false, preventDefault: () => { prevented = true; } }), true);
+  assert.equal(submitted, 1);
+  assert.equal(prevented, true);
+  assert.equal(controller.handleKeydown({ target: input, key: 'Enter', shiftKey: true, preventDefault() {} }), false);
+  assert.equal(submitted, 1);
+});

@@ -308,3 +308,360 @@
   background: var(--warning-soft);
   font-size: 0.9rem;
 }
+
+/* ------------------------------------------------------------------ messages */
+.buddy-share {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.chat-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.chat-layout.has-thread .chat-list {
+  display: none;
+}
+
+.chat-layout:not(.has-thread) .chat-main {
+  display: none;
+}
+
+.chat-list,
+.chat-main {
+  padding: 0.5rem;
+}
+
+.convo-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.convo-heading {
+  margin: 0.75rem 0.5rem 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.convo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 3.5rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.convo:hover,
+.convo.is-active {
+  background: var(--paper);
+}
+
+.convo__text,
+.convo__side {
+  display: grid;
+  min-width: 0;
+}
+
+.convo__side {
+  justify-items: end;
+  gap: 0.2rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.convo__name {
+  font-weight: 800;
+}
+
+.convo__preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thread-wrap {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  height: min(72vh, 46rem);
+  min-height: 24rem;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.25rem 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-back {
+  display: inline-grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--forest-deep);
+  font-size: 1.2rem;
+  text-decoration: none;
+}
+
+.chat-header__online {
+  margin-left: auto;
+  color: var(--success);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.chat-older {
+  justify-self: center;
+  margin: 0.5rem 0 0;
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.75rem 0.25rem;
+  overflow-y: auto;
+  list-style: none;
+  overscroll-behavior: contain;
+}
+
+.chat-day {
+  align-self: center;
+  margin: 0.5rem 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.chat-empty,
+.chat-placeholder {
+  margin: auto;
+  padding: 2rem 1rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.bubble {
+  display: grid;
+  max-width: min(85%, 30rem);
+  gap: 0.2rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.bubble--mine {
+  align-self: flex-end;
+  border-bottom-right-radius: 0.35rem;
+  color: var(--white);
+  background: var(--forest);
+}
+
+.bubble--theirs {
+  align-self: flex-start;
+  border-bottom-left-radius: 0.35rem;
+  background: var(--paper);
+}
+
+.bubble__text,
+.bubble__nudge {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.bubble__nudge {
+  font-weight: 800;
+}
+
+.bubble__meta {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.bubble--mine .bubble__retry {
+  color: var(--lime);
+}
+
+.bubble--exercise_card {
+  padding: 0.4rem;
+}
+
+.bubble--exercise_card.bubble--mine,
+.bubble--invitation.bubble--mine,
+.bubble--scheduled_workout.bubble--mine {
+  color: var(--ink);
+  background: var(--lime);
+}
+
+.chat-typing {
+  margin: 0 0.5rem 0.25rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.chat-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.5rem 0.25rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.chat-tool > summary,
+.chat-tool__link {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--white);
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-tool > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-tool[open] {
+  flex-basis: 100%;
+}
+
+.chat-tool__panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.6rem 0;
+}
+
+.chip {
+  min-height: 2.5rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--white);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--forest);
+}
+
+.chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.5rem;
+  padding: 0.6rem 0.25rem 0.25rem;
+}
+
+.chat-composer__input {
+  min-height: 2.9rem;
+  max-height: 9rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 1.2rem;
+  font: inherit;
+  resize: vertical;
+}
+
+.chat-locked {
+  margin: 0.5rem;
+  color: var(--muted);
+}
+
+.exercise-card-msg {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  color: var(--ink);
+  background: var(--white);
+}
+
+.exercise-card-msg__image {
+  width: 100%;
+  height: 9rem;
+  object-fit: contain;
+  background: var(--paper);
+}
+
+.exercise-card-msg__body {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.exercise-card-msg__name {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.exercise-card-msg__desc,
+.exercise-card-msg__target {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.exercise-card-msg__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.share-picker {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.share-picker .exercise-card-msg {
+  max-width: 24rem;
+}
+
+@media (min-width: 900px) {
+  .chat-layout,
+  .chat-layout.has-thread {
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  }
+
+  .chat-layout.has-thread .chat-list,
+  .chat-layout:not(.has-thread) .chat-main {
+    display: block;
+  }
+
+  .chat-back {
+    display: none;
+  }
+}

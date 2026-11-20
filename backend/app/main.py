@@ -18,6 +18,8 @@ from app.routes.reminders import router as reminders_router
 from app.routes.speech import router as speech_router
 from app.routes.workouts import router as workouts_router
 from app.realtime.ws import router as ws_router
+from app.realtime import handlers_chat  # noqa: F401  (registers socket handlers)
+from app.routes.chat import router as chat_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sabibody")
@@ -55,6 +57,7 @@ app.include_router(internal_router, prefix="/api")
 app.include_router(friends_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(ws_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 app.include_router(pose_router)
 
 

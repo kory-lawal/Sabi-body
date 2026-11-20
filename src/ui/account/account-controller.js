@@ -841,6 +841,7 @@ export function createAccountController({
       view?.scrollTo?.({ top: 0 });
     }
     resetFormName = '';
+    buddies?.afterRender?.(root, route);
   }
 
   return {
@@ -861,6 +862,7 @@ export function createAccountController({
     handleSubmit,
     handleInput,
     handleChange,
+    handleKeydown: (event) => buddies?.handleKeydown?.(event) ?? false,
     start() {
       void authService.restore();
       if (guard()) {
