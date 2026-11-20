@@ -1489,3 +1489,128 @@ body.duo-active {
     font-size: 0.78rem;
   }
 }
+
+/* ------------------------------------------------------------------ streaks */
+.friend-card__who {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.streak-badge {
+  display: inline-flex;
+  min-height: 1.8rem;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  color: #8a3b00;
+  background: #ffe9d6;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.streak-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.streak-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.streak-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.streak-card__big {
+  display: grid;
+  justify-items: end;
+}
+
+.streak-card__num {
+  color: #b34d00;
+  font-family: var(--display);
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.streak-card__label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.streak-card__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.streak-card__stats div {
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-control);
+  background: var(--paper);
+}
+
+.streak-card__stats dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.streak-card__stats dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.streak-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.streak-table th,
+.streak-table td {
+  padding: 0.4rem 0.3rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.streak-table thead th {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.streak-rules {
+  margin-top: 1rem;
+}
+
+.streak-rules__body {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.streak-rules__body p,
+.streak-rules__body ul {
+  margin: 0;
+}
+
+@media (min-width: 600px) {
+  .streak-card__stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

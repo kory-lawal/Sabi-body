@@ -2,6 +2,7 @@
 import { EXERCISES } from '../exercise-content.js';
 import { busyAttrs, emptyState, errorState, escapeHtml, loadingState, notice, pageHeader, personLine, tabs } from './components.js';
 import { connectionNotice } from './friends-page.js';
+import { streakRulesMarkup } from './streaks.js';
 
 export const CALENDAR_VIEWS = ['month', 'week', 'upcoming', 'pending', 'past', 'cancelled'];
 
@@ -349,5 +350,6 @@ export function renderCalendarPage({ calendar, friends, pending, message, failur
     ${calendar.form.open ? inviteForm(calendar.form, { friends, pending }) : ''}
     ${sessionDetails(calendar.selected, { pending, features, confirm })}
     ${nav}
-    <div class="buddy-panel">${body}</div>`;
+    <div class="buddy-panel">${body}</div>
+    ${streakRulesMarkup()}`;
 }

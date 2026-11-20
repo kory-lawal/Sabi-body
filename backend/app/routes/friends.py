@@ -71,7 +71,36 @@ def public_profile(username: str, current: CurrentUser = Depends(get_current_use
 
 @router.get("/friends")
 def list_friends(current: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    return svc.overview(db, current.user.id)
+    data = svc.overview(db, current.user.id)
+    from app.social import streaks
+    from app.social.common import pair
+    for friend in data["friends"]:
+        low, high = pair(current.user.id, uuid.UUID(friend["id"]))
+        friend["streak"] = streaks.for_pair(db, low, high)["buddy"]
+    return data
+
+
+@router.get("/streaks")
+def all_streaks(current: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    from app.db.models import User
+    from app.social import streaks
+    from app.social.common import pair
+    out = []
+    for fid in svc.friend_ids(db, current.user.id):
+        friend = db.get(User, fid)
+        low, high = pair(current.user.id, fid)
+        out.append({"friend": public_user(friend), **streaks.for_pair(db, low, high)})
+    out.sort(key=lambda r: (-r["buddy"]["current"], -r["buddy"]["total_completed"]))
+    return {"streaks": out, "milestones": list(streaks.MILESTONES)}
+
+
+@router.get("/streaks/{friend_id}")
+def friend_streaks(friend_id: str, current: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    from app.social import streaks
+    from app.social.common import pair, require_friend
+    friend = require_friend(db, current.user.id, parse_uuid(friend_id))
+    low, high = pair(current.user.id, friend.id)
+    return {"friend": public_user(friend), **streaks.for_pair(db, low, high), "milestones": list(streaks.MILESTONES)}
 
 
 @router.post("/friends/requests", status_code=status.HTTP_201_CREATED)

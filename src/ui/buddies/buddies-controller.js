@@ -48,6 +48,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     notifications: { items: null, unread: 0, loading: false, error: '', prefs: null, hasMore: false },
     counts: { notifications: 0, requests: 0, messages: 0, invites: 0 },
     calendar: emptyCalendar(),
+    streaks: { streaks: null, error: '' },
     chat: { conversations: null, unread: 0, loading: false, error: '', thread: null },
     share: null,
     online: new Set(),
@@ -157,6 +158,16 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     if (notes.status === 'fulfilled') state.counts.notifications = notes.value.unread;
     if (messages.status === 'fulfilled' && messages.value) state.counts.messages = messages.value.unread;
     void loadInvites();
+    changed();
+  }
+
+  async function loadStreaks() {
+    try {
+      const { streaks } = await buddiesApi.streaks();
+      state.streaks = { streaks, error: '' };
+    } catch (error) {
+      state.streaks.error = describe(error);
+    }
     changed();
   }
 
@@ -398,6 +409,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     switch (route.name) {
       case 'buddies': {
         void loadFriends({ quiet: Boolean(state.friends.data) });
+        if (route.params.tab === 'streaks') void loadStreaks();
         if (route.params.tab === 'find') {
           void loadProfile(route.params.view);
         }
@@ -804,6 +816,10 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
     });
     realtime.on('chat.message', onChatMessage);
     realtime.on('session.updated', () => refreshCalendar());
+    realtime.on('streaks.changed', () => {
+      void loadFriends({ quiet: true });
+      if (route.name === 'buddies' && route.params.tab === 'streaks') void loadStreaks();
+    });
     realtime.on('chat.read', (data) => {
       const thread = state.chat.thread;
       if (thread?.friend?.id === data.reader_id) {
@@ -833,7 +849,7 @@ export function createBuddiesController({ buddiesApi, getUser, refreshUser = asy
       const tab = FRIEND_TABS.includes(params.tab) ? params.tab : 'friends';
       return renderFriendsPage({
         me: getUser(), tab, ...state.friends, search: state.search, profile: state.profile, confirm: state.confirm,
-        features, online: state.online, connection: state.connection, ...shared,
+        features, online: state.online, connection: state.connection, streaks: state.streaks, ...shared,
       });
     }
     if (name === 'notifications') {

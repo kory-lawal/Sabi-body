@@ -210,3 +210,19 @@ test('invite form switches between now and a scheduled time', () => {
   assert.match(later, /name="date"/);
   assert.match(later, /name="time"/);
 });
+
+import { renderStreakList, streakBadge, streakRulesMarkup } from '../src/ui/buddies/streaks.js';
+
+test('streak list shows buddy and exercise streaks, and the rules', () => {
+  const html = renderStreakList({ streaks: [{
+    friend: bola,
+    buddy: { current: 4, longest: 6, total_completed: 9, last_completed_at: '2026-11-20T10:00:00Z', next_milestone: 7 },
+    exercises: [{ exercise_id: 'push-ups', current: 2, longest: 3, total_completed: 5, last_completed_at: null }],
+  }] });
+  assert.match(html, /streak-card__num">4</);
+  assert.match(html, /Push-ups/);
+  assert.match(html, /How buddy streaks work/);
+  assert.equal(streakBadge({ current: 0 }), '');
+  assert.match(streakBadge({ current: 3 }), /🔥 3/);
+  assert.match(streakRulesMarkup(), /not calendar days/);
+});

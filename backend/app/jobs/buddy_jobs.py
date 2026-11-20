@@ -41,6 +41,17 @@ LOOKAHEAD = timedelta(hours=24, minutes=5)
 HOOKS: list[Callable[[Session, datetime], dict]] = []
 
 
+def _register_hooks() -> None:
+    from app.social import shared_workouts, streaks
+    if streaks.evaluate_due not in HOOKS:
+        HOOKS.append(streaks.evaluate_due)
+    if streaks.on_session_finished not in shared_workouts.ON_SESSION_FINISHED:
+        shared_workouts.ON_SESSION_FINISHED.append(streaks.on_session_finished)
+
+
+_register_hooks()
+
+
 def _zone(name: str | None) -> ZoneInfo:
     try:
         return ZoneInfo(name or "UTC")

@@ -288,6 +288,9 @@ def cancel(db: Session, me: User, session_id: uuid.UUID) -> SharedSession:
     s.cancelled_at = now
     s.awaiting_user_id = None
     _event(db, s, me.id, "cancelled", {"late": bool(late), "was": was})
+    if was == "accepted":  # only confirmed commitments affect streaks
+        from app.social import streaks
+        streaks.on_cancelled(db, s, bool(late))
     friend_id = other_user(s, me.id)
     notifications.notify(db, friend_id, "session_update", actor_id=me.id, entity_type="shared_session", entity_id=s.id,
                          dedupe_key=f"cancelled:{s.id}", payload=_notify_payload(s, change="cancelled"))

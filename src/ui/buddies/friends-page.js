@@ -1,4 +1,5 @@
 /** #/buddies?tab=friends|requests|sent|blocked|find — friend management. */
+import { renderStreakList, streakBadge } from './streaks.js';
 import {
   busyAttrs,
   emptyState,
@@ -18,7 +19,7 @@ export function connectionNotice(connection) {
   return '';
 }
 
-export const FRIEND_TABS = ['friends', 'requests', 'sent', 'blocked', 'find'];
+export const FRIEND_TABS = ['friends', 'streaks', 'requests', 'sent', 'blocked', 'find'];
 
 const REPORT_REASONS = [
   ['spam', 'Spam or advertising'],
@@ -76,7 +77,7 @@ function friendCard(friend, { confirm, pending, features, online }) {
   return `
     <li class="friend-card">
       <div class="friend-card__main">
-        ${personLine(friend)}
+        <span class="friend-card__who">${personLine(friend)}${streakBadge(friend.streak)}</span>
         <p class="friend-card__meta">${online?.has(friend.id) ? '<span class="presence-dot" aria-hidden="true"></span><span>Online now</span> · ' : ''}${escapeHtml(friendsSince(friend.friends_since))}${friend.muted ? ' · <span class="badge badge--muted">Muted</span>' : ''}</p>
       </div>
       <div class="friend-card__actions">${actions.join('')}</div>
@@ -147,7 +148,7 @@ function profilePanel(profile) {
 }
 
 export function renderFriendsPage({ me, tab = 'friends', data, loading, error, search = {}, profile, confirm, pending,
-  message, failure, features = {}, online = new Set(), connection = 'idle' }) {
+  message, failure, features = {}, online = new Set(), connection = 'idle', streaks = {} }) {
   const incomingCount = data?.incoming?.length ?? 0;
   const header = pageHeader({
     title: 'Friends',
@@ -157,6 +158,7 @@ export function renderFriendsPage({ me, tab = 'friends', data, loading, error, s
   });
   const nav = tabs([
     { id: 'friends', title: `My friends${data ? ` (${data.friends.length})` : ''}`, href: '#/buddies?tab=friends' },
+    { id: 'streaks', title: 'Streaks', href: '#/buddies?tab=streaks' },
     { id: 'requests', title: 'Requests', href: '#/buddies?tab=requests', count: incomingCount },
     { id: 'sent', title: 'Sent', href: '#/buddies?tab=sent' },
     { id: 'blocked', title: 'Blocked', href: '#/buddies?tab=blocked' },
@@ -185,6 +187,8 @@ export function renderFriendsPage({ me, tab = 'friends', data, loading, error, s
             ? `<ul class="friend-list" aria-live="polite">${results.map((r) => searchResult(r, { pending, confirm })).join('')}</ul>`
             : `<p class="muted" aria-live="polite">No members found for “${escapeHtml(search.q)}”.</p>`}
       </section>`;
+  } else if (tab === 'streaks') {
+    body = renderStreakList(streaks);
   } else if (error && !data) {
     body = errorState(error);
   } else if (!data || loading && !data) {

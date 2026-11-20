@@ -414,6 +414,7 @@ def schedule(coro) -> None:
     """Run a coroutine on the socket event loop from sync code (e.g. after a workout save)."""
     loop = registry.loop
     if loop is None or loop.is_closed():
+        coro.close()  # nobody is connected to this process; nothing to push
         return
     try:
         running = asyncio.get_running_loop()

@@ -50,6 +50,8 @@ export function createBuddiesApi(api) {
     sessionSummary: (sessionId) => api.get(`/api/shared-sessions/${id(sessionId)}/summary`, auth),
     iceServers: () => api.get('/api/rtc/ice-servers', auth),
 
+    streaks: () => api.get('/api/streaks', auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),
