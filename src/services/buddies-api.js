@@ -47,6 +47,9 @@ export function createBuddiesApi(api) {
     respondSession: (sessionId, action) => api.post(`/api/shared-sessions/${id(sessionId)}/${action}`, {}, auth),
     rescheduleSession: (sessionId, scheduledAt) => api.post(`/api/shared-sessions/${id(sessionId)}/reschedule`, { scheduled_at: scheduledAt }, auth),
 
+    sessionSummary: (sessionId) => api.get(`/api/shared-sessions/${id(sessionId)}/summary`, auth),
+    iceServers: () => api.get('/api/rtc/ice-servers', auth),
+
     // notifications
     notifications: (before) => api.get(`/api/notifications${query({ before })}`, auth),
     unreadCount: () => api.get('/api/notifications/unread-count', auth),

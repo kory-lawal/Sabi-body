@@ -30,6 +30,7 @@ export function toWorkoutPayload(attempt) {
     duration_seconds: attempt.durationSeconds,
     started_at: attempt.startedAt,
     completed_at: attempt.completedAt,
+    ...(attempt.sharedSessionId ? { shared_session_id: attempt.sharedSessionId } : {}),
   };
 }
 

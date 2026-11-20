@@ -966,3 +966,526 @@
     display: none;
   }
 }
+
+/* ------------------------------------------------------------------ Workout Together */
+body.duo-active {
+  overflow-x: hidden;
+}
+
+.duo-page {
+  display: grid;
+  gap: 0.75rem;
+  width: min(100%, 90rem);
+  margin: 0 auto;
+  padding: 0.75rem var(--page-gutter, 1rem) 1.25rem;
+}
+
+.duo-page--message {
+  min-height: 70vh;
+  align-content: center;
+}
+
+.duo-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.duo-eyebrow {
+  margin: 0;
+  color: var(--forest);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.duo-title h1 {
+  margin: 0.1rem 0 0;
+  font-family: var(--display);
+  font-size: clamp(1.2rem, 4vw, 1.8rem);
+}
+
+.duo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.duo-chip {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--paper);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.duo-chip[data-tone="ok"] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.duo-chip[data-tone="warning"] {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.duo-chip--timer {
+  font-variant-numeric: tabular-nums;
+}
+
+.duo-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.duo-live[hidden] {
+  display: none;
+}
+
+.duo-live__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.duo-stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  height: calc(100dvh - 13.5rem);
+  min-height: 26rem;
+}
+
+.duo-tile {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  border-radius: 1rem;
+  background: #10261f;
+}
+
+.duo-tile--me {
+  outline: 3px solid var(--lime);
+  outline-offset: -3px;
+}
+
+.duo-video,
+.duo-canvas,
+.duo-remote-slot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.duo-video {
+  object-fit: cover;
+  background: #10261f;
+}
+
+/* Only your own view is mirrored; your friend appears as they are. */
+.duo-video--local,
+.duo-canvas {
+  transform: scaleX(-1);
+}
+
+.duo-canvas {
+  pointer-events: none;
+}
+
+.duo-remote-slot .duo-video--remote {
+  transform: none;
+}
+
+.duo-tile__placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.6rem;
+  padding: 1rem;
+  color: var(--white);
+  text-align: center;
+}
+
+.duo-tile__placeholder[hidden] {
+  display: none;
+}
+
+.duo-tile__name {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  color: var(--white);
+  background: rgb(0 0 0 / 0.55);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.duo-tile__panel {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.8rem;
+  color: var(--white);
+  background: rgb(0 0 0 / 0.55);
+}
+
+.duo-count {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.duo-count strong {
+  font-family: var(--display);
+  font-size: clamp(1.6rem, 6vw, 2.6rem);
+  line-height: 1;
+}
+
+.duo-bar {
+  height: 0.4rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.25);
+}
+
+.duo-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  transition: width 0.25s ease;
+}
+
+.duo-bar--partner span {
+  background: #8fd3ff;
+}
+
+.duo-tile__state {
+  margin: 0;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+.duo-countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--white);
+  background: rgb(16 38 31 / 0.45);
+  font-family: var(--display);
+  font-size: clamp(4rem, 20vw, 9rem);
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.duo-countdown[hidden] {
+  display: none;
+}
+
+.duo-cheers {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.duo-cheer {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--lime);
+  font-weight: 800;
+  box-shadow: var(--shadow-soft);
+  animation: duo-pop 0.3s ease-out;
+}
+
+@keyframes duo-pop {
+  from { transform: scale(0.7); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.duo-banner {
+  margin: 0;
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--radius-control);
+  color: var(--forest-deep);
+  background: var(--success-soft);
+  font-weight: 700;
+}
+
+.duo-banner[hidden] {
+  display: none;
+}
+
+.duo-coach {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.duo-controls {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: var(--shadow-soft);
+}
+
+.duo-toggle,
+.duo-cheer-menu > summary {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--forest-deep);
+  background: var(--white);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  list-style: none;
+}
+
+.duo-toggle[aria-pressed="false"] {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.duo-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.duo-cheer-menu {
+  position: relative;
+}
+
+.duo-cheer-menu__panel {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  width: min(18rem, 80vw);
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--white);
+  box-shadow: var(--shadow-soft);
+}
+
+.duo-ready {
+  min-width: 8.5rem;
+}
+
+.duo-ready[hidden] {
+  display: none;
+}
+
+.duo-leave {
+  margin-left: auto;
+}
+
+.duo-hint,
+.duo-instructions {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.duo-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+.duo-panel[hidden] {
+  display: none;
+}
+
+.duo-panel h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.duo-summary__list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.duo-summary__person {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-control);
+  background: var(--paper);
+}
+
+.duo-summary__streak {
+  margin: 0;
+  font-weight: 700;
+}
+
+.duo-summary__next,
+.duo-round,
+.duo-round-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.duo-round-form .field__input {
+  width: auto;
+  min-height: 2.75rem;
+}
+
+@media (min-width: 680px) {
+  .duo-stage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    height: min(calc(100dvh - 15rem), 40rem);
+    min-height: 20rem;
+  }
+}
+
+/* Phones held sideways: side by side with smaller chrome. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .duo-stage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    height: calc(100dvh - 7rem);
+    min-height: 12rem;
+  }
+
+  .duo-hint,
+  .duo-instructions,
+  .duo-coach {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duo-cheer,
+  .duo-bar span {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Phones (portrait): one compact control row so nothing covers the counters. */
+@media (max-width: 679px) {
+  .duo-page {
+    gap: 0.5rem;
+    padding-top: 0.5rem;
+  }
+
+  .duo-stage {
+    height: calc(100dvh - 11.5rem);
+    min-height: 22rem;
+  }
+
+  .duo-controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 0.4rem;
+    scrollbar-width: none;
+  }
+
+  .duo-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .duo-controls > * {
+    flex: 0 0 auto;
+  }
+
+  .duo-toggle [data-duo-mic-label],
+  .duo-toggle [data-duo-cam-label],
+  .duo-toggle [data-duo-counts-label],
+  .duo-toggle > span:not([aria-hidden]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .duo-toggle {
+    min-width: 2.75rem;
+    justify-content: center;
+    padding: 0.35rem 0.6rem;
+  }
+
+  .duo-cheer-menu__panel {
+    position: fixed;
+    right: 0.75rem;
+    bottom: 4.5rem;
+    left: 0.75rem;
+    width: auto;
+  }
+
+  .duo-tile__panel {
+    padding: 0.35rem 0.55rem;
+  }
+
+  .duo-hint,
+  .duo-instructions {
+    font-size: 0.78rem;
+  }
+}

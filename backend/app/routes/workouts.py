@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.accounts.deps import CurrentUser, api_error, get_current_user
@@ -55,6 +56,8 @@ class WorkoutCreate(BaseModel):
     duration_seconds: int = Field(ge=0, le=MAX_WORKOUT_SECONDS)
     started_at: datetime
     completed_at: datetime | None = None
+    # Set when this workout was done in a SabiBody Buddies shared session.
+    shared_session_id: uuid.UUID | None = None
 
     @field_validator("idempotency_key")
     @classmethod
@@ -74,6 +77,7 @@ class WorkoutCreate(BaseModel):
 def workout_out(row: WorkoutSession) -> dict:
     return {
         "id": str(row.id),
+        "shared_session_id": str(row.shared_session_id) if row.shared_session_id else None,
         "exercise_id": row.exercise_id,
         "exercise_name": row.exercise_name,
         "exercise_type": row.exercise_type,
@@ -121,9 +125,16 @@ def create_workout(body: WorkoutCreate, current: CurrentUser = Depends(get_curre
         if completed_at < started_at or completed_at > now + timedelta(minutes=5):
             raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_timestamp", "Completion time is not valid.")
 
+    shared = None
+    if body.shared_session_id is not None:
+        from app.social import shared_workouts
+        shared = shared_workouts.validate_link(db, current.user.id, body.shared_session_id, body.exercise_id,
+                                               target_reps if exercise_type == "reps" else target_duration)
+
     values = dict(
         id=uuid.uuid4(),
         user_id=current.user.id,
+        shared_session_id=shared.id if shared else None,
         exercise_id=body.exercise_id,
         exercise_name=name,
         exercise_type=exercise_type,
@@ -136,17 +147,26 @@ def create_workout(body: WorkoutCreate, current: CurrentUser = Depends(get_curre
         completed_at=completed_at,
         idempotency_key=body.idempotency_key,
     )
-    inserted = db.execute(
-        pg_insert(WorkoutSession)
-        .values(**values)
-        .on_conflict_do_nothing(constraint="uq_workout_sessions_user_idempotency")
-        .returning(WorkoutSession.id)
-    ).scalar()
+    try:
+        inserted = db.execute(
+            pg_insert(WorkoutSession)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="uq_workout_sessions_user_idempotency")
+            .returning(WorkoutSession.id)
+        ).scalar()
+    except IntegrityError as exc:  # already saved a workout for this shared session
+        db.rollback()
+        raise api_error(status.HTTP_409_CONFLICT, "already_saved",
+                        "You've already saved a workout for this shared session.") from exc
     db.commit()
     row = db.scalar(select(WorkoutSession).where(
         WorkoutSession.user_id == current.user.id,
         WorkoutSession.idempotency_key == body.idempotency_key,
     ))
+    if shared is not None and row.shared_session_id == shared.id:
+        from app.social import shared_workouts
+        db.refresh(shared)
+        shared_workouts.record(db, current.user.id, shared, row)
     return {"workout": workout_out(row), "duplicate": inserted is None}
 
 

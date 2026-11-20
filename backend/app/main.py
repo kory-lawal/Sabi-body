@@ -18,7 +18,8 @@ from app.routes.reminders import router as reminders_router
 from app.routes.speech import router as speech_router
 from app.routes.workouts import router as workouts_router
 from app.realtime.ws import router as ws_router
-from app.realtime import handlers_chat  # noqa: F401  (registers socket handlers)
+from app.realtime import handlers_chat, rooms  # noqa: F401  (register socket handlers)
+from app.routes.rtc import router as rtc_router
 from app.routes.chat import router as chat_router
 from app.routes.shared_sessions import router as shared_sessions_router
 
@@ -59,6 +60,7 @@ app.include_router(friends_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(ws_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(rtc_router, prefix="/api")
 app.include_router(shared_sessions_router, prefix="/api")
 app.include_router(pose_router)
 

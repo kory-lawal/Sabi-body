@@ -36,6 +36,10 @@ import { createAccountController } from './account/account-controller.js';
 import { createBuddiesController } from './buddies/buddies-controller.js';
 import { createBuddiesApi } from '../services/buddies-api.js';
 import { createRealtimeClient, realtimeUrl } from '../buddies/realtime-client.js';
+import { createSharedWorkout } from '../buddies/shared-workout.js';
+import { renderTogether, togetherScreenKey, updateTogether } from './buddies/together-view.js';
+import { parseRoute } from './router.js';
+import { waitForVideoReady } from '../camera/camera.js';
 import { EXERCISES } from './exercise-content.js';
 
 const MOBILE_WORKOUT_QUERY =
@@ -2166,10 +2170,12 @@ export function mountApp(root, {
       else if (state.status === 'anonymous') realtime.disconnect();
     });
   }
+  const buddiesApi = authService ? createBuddiesApi(authService.api) : null;
+  let sharedWorkout = null;
   const buddiesController = authService
     ? createBuddiesController({
       realtime,
-      buddiesApi: createBuddiesApi(authService.api),
+      buddiesApi,
       getUser: () => authService.getState().user,
       features: { messages: true, together: true },
       refreshUser: () => authService.refreshUser(),
@@ -2287,6 +2293,20 @@ export function mountApp(root, {
     latestState = incomingState;
     const account = accountInfo();
     const state = account ? { ...incomingState, account } : incomingState;
+    if (sharedWorkout?.isActive()) {
+      sharedWorkout.onLocalState(incomingState);
+      const together = togetherScreenKey(sharedWorkout);
+      if (together !== currentScreen) {
+        setMobileSettingsOpen(false);
+        currentScreen = together;
+        renderTogether(root, state, sharedWorkout);
+      }
+      updateTogether(root, state, sharedWorkout);
+      ownerDocument?.body?.classList?.toggle('workout-active', false);
+      ownerDocument?.body?.classList?.toggle('duo-active', true);
+      return;
+    }
+    ownerDocument?.body?.classList?.toggle('duo-active', false);
     const workoutBusy = ['loading', 'running', 'paused', 'completed'].includes(state.workoutStatus);
     const showAccountPage = Boolean(accountController?.isActive()) && state.view === 'home' && !workoutBusy;
     const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}` : '';
@@ -2371,17 +2391,70 @@ export function mountApp(root, {
       }
     },
   });
+  async function attachSharedStream(videoElement) {
+    const shared = sharedWorkout.stream();
+    videoElement.srcObject = shared;
+    videoElement.muted = true;
+    await videoElement.play?.()?.catch?.(() => {});
+    await waitForVideoReady(videoElement);
+    return shared;
+  }
+  const acquireCamera = controllerOptions.startCamera;
+  const releaseCamera = controllerOptions.stopCamera;
   controller = createWorkoutController({
-    onWorkoutAttemptEnded: (attempt) => accountController?.saveWorkoutAttempt(attempt),
+    // In Workout Together the attempt is linked to the shared session; each
+    // person's own result is saved to their own history.
+    onWorkoutAttemptEnded: (attempt) => accountController?.saveWorkoutAttempt(
+      sharedWorkout?.isActive() ? { ...attempt, sharedSessionId: sharedWorkout.sessionId() } : attempt),
     ...controllerOptions,
+    // While a shared room is open, MediaPipe uses the room's camera stream (the same
+    // one sent to the partner) and finishing must not switch that camera off.
+    startCamera: (videoElement) => (sharedWorkout?.isActive() && sharedWorkout.stream()
+      ? attachSharedStream(videoElement)
+      : (acquireCamera ?? startCamera)(videoElement)),
+    stopCamera: (mediaStream, videoElement) => {
+      if (sharedWorkout?.isActive() && mediaStream && mediaStream === sharedWorkout.stream()) {
+        return undefined;
+      }
+      return (releaseCamera ?? stopCamera)(mediaStream, videoElement);
+    },
     onState: render,
     speechCoach: coach,
     audioCoach,
     voicePlayback: playbackManager,
     getMediaElements: () => ({
-      video: root.querySelector('video'),
-      canvas: root.querySelector('canvas'),
+      video: root.querySelector('[data-local-video]') ?? root.querySelector('video'),
+      canvas: root.querySelector('[data-local-canvas]') ?? root.querySelector('canvas'),
     }),
+  });
+
+  if (realtime && buddiesApi) {
+    sharedWorkout = createSharedWorkout({
+      realtime,
+      buddiesApi,
+      getUser: () => authService.getState().user,
+      workout: controller,
+      onChange: () => render(controller.getState()),
+      navigate: (name, params) => accountController?.navigate(name, params),
+      view: ownerDocument?.defaultView ?? globalThis,
+    });
+  }
+
+  function syncTogetherRoute() {
+    if (!sharedWorkout) return;
+    const route = parseRoute((ownerDocument?.defaultView ?? globalThis).location?.hash ?? '');
+    if (route.name === 'together') {
+      if (authService.getState().status === 'authenticated' && route.params.session
+        && sharedWorkout.sessionId() !== route.params.session) {
+        void sharedWorkout.enter(route.params.session);
+      }
+    } else if (sharedWorkout.isActive()) {
+      void sharedWorkout.leave({ navigateAway: false });
+    }
+  }
+  authService?.subscribe((authState) => {
+    if (authState.status === 'authenticated') syncTogetherRoute();
+    else if (authState.status === 'anonymous' && sharedWorkout?.isActive()) void sharedWorkout.leave({ navigateAway: false });
   });
 
   root.addEventListener('click', (event) => {
@@ -2394,6 +2467,53 @@ export function mountApp(root, {
       return;
     }
     switch (button.dataset.action) {
+      case 'duo-ready':
+        sharedWorkout?.setReady(!sharedWorkout.getState().ready);
+        break;
+      case 'duo-start':
+        sharedWorkout?.startCounting();
+        break;
+      case 'duo-retry-media':
+        void sharedWorkout?.retryMedia();
+        break;
+      case 'duo-mic':
+        sharedWorkout?.toggleMic();
+        break;
+      case 'duo-cam':
+        sharedWorkout?.toggleCam();
+        break;
+      case 'duo-counts':
+        sharedWorkout?.toggleCounts();
+        break;
+      case 'duo-cheer':
+        sharedWorkout?.cheer(button.dataset.cheer);
+        button.closest?.('details')?.removeAttribute?.('open');
+        break;
+      case 'duo-enable-audio':
+        sharedWorkout?.enableRemoteAudio();
+        break;
+      case 'duo-leave':
+        void sharedWorkout?.leave();
+        break;
+      case 'duo-dashboard':
+        void sharedWorkout?.leave({ navigateAway: false }).then(() => accountController?.navigate('buddies'));
+        break;
+      case 'duo-round-repeat':
+        sharedWorkout?.proposeRound(button.dataset.exercise, button.dataset.target);
+        break;
+      case 'duo-round-other': {
+        const form = button.closest?.('[data-duo-round-form]');
+        const exercise = form?.querySelector?.('[data-duo-next-exercise]')?.value;
+        const target = form?.querySelector?.('[data-duo-next-target]')?.value;
+        if (exercise && target) sharedWorkout?.proposeRound(exercise, target);
+        break;
+      }
+      case 'duo-round-accept':
+        sharedWorkout?.respondRound(true);
+        break;
+      case 'duo-round-decline':
+        sharedWorkout?.respondRound(false);
+        break;
       case 'scroll-exercises': {
         const section = root.querySelector('#exercise-selection');
         const reducedMotion = globalThis.matchMedia?.(
@@ -2537,6 +2657,11 @@ export function mountApp(root, {
   if (accountController) {
     accountView?.addEventListener?.('hashchange', () => {
       setMobileSettingsOpen(false);
+      syncTogetherRoute();
+      if (parseRoute(accountView.location?.hash ?? '').name === 'together') {
+        render(controller.getState());
+        return;
+      }
       const status = controller.getState().workoutStatus;
       if (status === 'completed') {
         controller.goToExerciseChooser();

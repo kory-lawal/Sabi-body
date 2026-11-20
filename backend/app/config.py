@@ -72,6 +72,15 @@ class Settings:
 
     # Scheduled reminders
     CRON_SECRET = os.getenv("CRON_SECRET", "").strip()
+
+    # --- Workout Together video (WebRTC). STUN is public; TURN relays for strict networks.
+    # Metered (OpenRelay): https://www.metered.ca — app name + secret API key, kept server-side.
+    METERED_TURN_APP = os.getenv("METERED_TURN_APP", "").strip()
+    METERED_TURN_API_KEY = os.getenv("METERED_TURN_API_KEY", "").strip()
+    # Or any static TURN server (comma-separated urls).
+    TURN_URLS = [u.strip() for u in os.getenv("TURN_URLS", "").split(",") if u.strip()]
+    TURN_USERNAME = os.getenv("TURN_USERNAME", "").strip()
+    TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "").strip()
     REMINDER_SEND_WINDOW_MINUTES = _int("REMINDER_SEND_WINDOW_MINUTES", 180)
 
     @property
