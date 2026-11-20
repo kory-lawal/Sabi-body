@@ -124,3 +124,24 @@ test('server expiry warning triggers auth.refresh with the new token', async () 
   client.disconnect();
   assert.equal(client.status(), 'idle');
 });
+
+test('a close before "ready" with no code (proxy dropped 4401) refreshes the token and retries', async () => {
+  FakeSocket.instances = [];
+  const timers = fakeTimers();
+  let token = 'stale';
+  let refreshed = 0;
+  const client = createRealtimeClient({ url: 'u', getToken: () => token, WebSocketImpl: FakeSocket, timers, view: null,
+    refreshToken: async () => { refreshed += 1; token = 'fresh'; return token; } });
+  client.connect();
+  const ws = FakeSocket.instances[0];
+  ws.open();
+  ws.close(1006);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(refreshed, 1);
+  assert.notEqual(client.status(), 'signed-out');
+  timers.runNext();
+  const next = FakeSocket.instances[1];
+  next.open();
+  assert.deepEqual(next.sent[0], { type: 'auth', data: { token: 'fresh' } });
+  client.disconnect();
+});
