@@ -92,3 +92,12 @@ test('sit-up clears a pending rise after a sustained tracking gap', () => {
   lost.update([], 533);
   assert.equal(lost.update(loweredPose(), 566).count, 0);
 });
+
+test('sit-up readiness requires a stable lowered position without counting', () => {
+  const analyzer = createSitUpAnalyzer();
+
+  assert.equal(analyzer.checkReady(loweredPose(), 0).ready, false);
+  assert.equal(analyzer.checkReady(loweredPose(), 400).ready, true);
+  assert.equal(analyzer.update(loweredPose(), 401).count, 0);
+  assert.equal(analyzer.checkReady(uprightPose(), 402).ready, false);
+});

@@ -5,3 +5,13 @@ dist/
 .env.*
 !.env.example
 local.settings.json
+.venv/
+backend/.venv/
+__pycache__/
+*.pyc
+.pgdata/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

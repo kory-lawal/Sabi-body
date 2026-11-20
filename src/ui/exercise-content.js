@@ -1,7 +1,9 @@
 export const EXERCISES = Object.freeze({
   squats: {
     name: 'Squats',
+    description: 'A controlled lower-body exercise that bends the hips and knees before returning to standing.',
     mark: 'S',
+    targetMuscles: ['Quadriceps', 'Glutes', 'Hamstrings'],
     benefits: 'Helps strengthen your thighs, hips and glutes while improving lower-body strength.',
     instruction: 'Stand side-on to the camera with your hip, knee, and ankle visible.',
     instructions: 'Stand with your feet about shoulder-width apart. Push your hips back and bend your knees, keeping your chest lifted. Lower to a comfortable depth, then press through your feet to stand.',
@@ -15,7 +17,9 @@ export const EXERCISES = Object.freeze({
   },
   'jumping-jacks': {
     name: 'Jumping Jacks',
+    description: 'A full-body cardio movement that combines a jump with coordinated arm and leg movement.',
     mark: 'J',
+    targetMuscles: ['Calves', 'Shoulders', 'Glutes'],
     benefits: 'Gets your heart pumping, improves cardiovascular fitness and helps warm up your whole body.',
     instruction: 'Face the camera and leave room to move your arms and feet.',
     instructions: 'Stand with your feet together and arms at your sides. Jump your feet apart as you raise your arms overhead, then jump back to the starting position. Land softly.',
@@ -29,7 +33,9 @@ export const EXERCISES = Object.freeze({
   },
   plank: {
     name: 'Plank',
+    description: 'A stationary core exercise that holds the body in a steady, straight line.',
     mark: 'P',
+    targetMuscles: ['Abdominals', 'Obliques', 'Shoulders'],
     benefits: 'Helps strengthen your core, improve stability and support better posture.',
     instruction: 'Turn side-on to the camera and hold a steady plank position.',
     instructions: 'Place your forearms beneath your shoulders and extend your legs behind you. Support yourself on your forearms and toes, keeping your head, back, hips and heels in a steady line.',
@@ -43,7 +49,9 @@ export const EXERCISES = Object.freeze({
   },
   'push-ups': {
     name: 'Push-ups',
+    description: 'A bodyweight press that lowers and raises the chest from a straight-arm plank.',
     mark: 'P',
+    targetMuscles: ['Chest', 'Shoulders', 'Triceps', 'Core'],
     benefits: 'Strengthens your chest, shoulders, arms and core.',
     instruction: 'Start in a straight-arm push-up position, side-on to the camera.',
     instructions: 'Start in a straight-body plank with your hands under your shoulders. Bend your elbows to lower your chest toward the floor, then press back up while keeping your body aligned.',
@@ -57,7 +65,9 @@ export const EXERCISES = Object.freeze({
   },
   'sit-ups': {
     name: 'Sit-ups',
+    description: 'A trunk-flexion exercise that lifts the upper body from a lying position.',
     mark: 'S',
+    targetMuscles: ['Abdominals', 'Hip flexors'],
     benefits: 'Works your abdominal muscles and helps build core strength.',
     instruction: 'Lie back side-on to the camera with your shoulders, hips, and knees visible.',
     instructions: 'Lie on your back with your knees bent and feet on the floor. Tighten your abdomen and lift your upper body toward your knees, then lower back down with control.',
@@ -71,7 +81,9 @@ export const EXERCISES = Object.freeze({
   },
   lunges: {
     name: 'Lunges',
+    description: 'A single-leg exercise that bends both knees while one foot steps back.',
     mark: 'L',
+    targetMuscles: ['Quadriceps', 'Glutes', 'Hamstrings'],
     benefits: 'Helps strengthen your legs and glutes while improving balance and stability.',
     instruction: 'Stand in a three-quarter view with both legs visible.',
     instructions: 'Stand tall, step one foot back, and bend both knees comfortably. Keep your front knee tracking over your foot, then push through your front foot to stand. Alternate legs.',
@@ -81,6 +93,22 @@ export const EXERCISES = Object.freeze({
       type: 'image',
       src: new URL('../../Lunges.png', import.meta.url).href,
       alt: 'Illustration showing standing and lowered positions of a lunge.',
+    },
+  },
+  'high-knees': {
+    name: 'High Knees',
+    description: 'A standing cardio drill that alternately drives each knee toward hip height.',
+    mark: 'H',
+    targetMuscles: ['Hip flexors', 'Quadriceps', 'Calves'],
+    benefits: 'Builds cardiovascular endurance while challenging the hip flexors and legs.',
+    instruction: 'Stand facing the camera with both knees and ankles visible.',
+    instructions: 'Stand tall and jog in place, lifting one knee at a time toward hip height. Pump your arms naturally and land softly on the balls of your feet.',
+    cameraInstruction: 'Face the camera and keep both hips, knees, and ankles in view; leave room to lift each knee.',
+    progressLabel: 'Repetitions',
+    media: {
+      type: 'image',
+      src: new URL('../../High Knees.png', import.meta.url).href,
+      alt: 'Cartoon man and woman in modest sportswear demonstrating High Knees.',
     },
   },
 });

@@ -127,3 +127,12 @@ test('push-up skips low-confidence or missing joints', () => {
   lost.update([], 533);
   assert.equal(lost.update(pose({ elbowAngle: 180 }), 566).count, 0);
 });
+
+test('push-up readiness requires a stable extended position without counting', () => {
+  const analyzer = createPushUpAnalyzer();
+
+  assert.equal(analyzer.checkReady(pose({ elbowAngle: 180 }), 0).ready, false);
+  assert.equal(analyzer.checkReady(pose({ elbowAngle: 180 }), 400).ready, true);
+  assert.equal(analyzer.update(pose({ elbowAngle: 180 }), 401).count, 0);
+  assert.equal(analyzer.checkReady(pose({ elbowAngle: 90 }), 402).ready, false);
+});

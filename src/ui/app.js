@@ -6,6 +6,7 @@ import { createPushUpAnalyzer } from '../exercises/push-ups.js';
 import { createSquatAnalyzer } from '../exercises/squat.js';
 import { createSitUpAnalyzer } from '../exercises/sit-ups.js';
 import { createLungeAnalyzer } from '../exercises/lunges.js';
+import { createHighKneesAnalyzer } from '../exercises/high-knees.js';
 import {
   EXERCISE_INSTRUCTION_IDS,
   LANGUAGES,
@@ -29,6 +30,9 @@ import {
 } from '../pose/pose-diagnostics.js';
 import { createPoseTracker } from '../pose/pose-tracker.js';
 import { createVoiceClient } from '../services/voice-client.js';
+import { createAccountData } from '../services/account-data.js';
+import { createAuthService } from '../services/auth-service.js';
+import { createAccountController } from './account/account-controller.js';
 import { EXERCISES } from './exercise-content.js';
 
 const MOBILE_WORKOUT_QUERY =
@@ -40,6 +44,22 @@ const VOICE_FAILURE_MESSAGE =
 
 function logVoiceError(context, error) {
   globalThis.console?.error?.(`[SabiBody] ${context}`, error);
+}
+
+export function createWorkoutSessionId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
 const ESSENTIAL_CORRECTIONS = new Set([
@@ -64,6 +84,7 @@ const GOAL_PRESETS = {
   'push-ups': [5, 10, 15, 20, 25, 30],
   'sit-ups': [5, 6, 10, 15, 20, 30],
   lunges: [5, 10, 15, 20, 25, 30],
+  'high-knees': [5, 10, 15, 20, 25, 30, 50],
 };
 
 const DEFAULT_TARGETS = Object.freeze({
@@ -73,6 +94,7 @@ const DEFAULT_TARGETS = Object.freeze({
   'push-ups': 5,
   'sit-ups': 6,
   lunges: 10,
+  'high-knees': 10,
 });
 
 export function getDefaultTarget(exerciseId) {
@@ -161,6 +183,7 @@ function createAnalyzers() {
     'push-ups': createPushUpAnalyzer(),
     'sit-ups': createSitUpAnalyzer(),
     lunges: createLungeAnalyzer(),
+    'high-knees': createHighKneesAnalyzer(),
   };
 }
 
@@ -236,6 +259,9 @@ export function createWorkoutController({
   speechQueue,
   storage,
   getMediaElements,
+  onWorkoutAttemptEnded = () => {},
+  createSessionId = createWorkoutSessionId,
+  now = () => Date.now(),
   diagnosticsEnabled = import.meta.env?.DEV === true,
 } = {}) {
   const voicePreferences = loadVoicePreferences(storage);
@@ -256,6 +282,7 @@ export function createWorkoutController({
   let startPromise = null;
   let generation = 0;
   let trackEndedHandler = null;
+  let workoutAttempt = null;
   let lastFeedbackEvent = { feedbackId: 'ready', parameters: {} };
   let voiceGeneration = 0;
   let voiceCatalogRequest = null;
@@ -293,6 +320,55 @@ export function createWorkoutController({
     return { target, completed, remaining, percent };
   }
 
+  function beginWorkoutAttempt() {
+    workoutAttempt = { clientSessionId: createSessionId(), runningSinceMs: null };
+  }
+
+  // Returns the finished attempt, or null when tracking never actually started
+  // (for example a camera or pose-model failure), so those are never saved.
+  function takeWorkoutAttempt(completed) {
+    const attempt = workoutAttempt;
+    workoutAttempt = null;
+    if (!attempt || attempt.runningSinceMs === null) {
+      return null;
+    }
+    const endedAtMs = Number(now());
+    const isPlank = state.selectedExercise === 'plank';
+    const { target } = getWorkoutProgress();
+    const heldSeconds = Math.floor((state.elapsedMs ?? 0) / 1000);
+    return {
+      clientSessionId: attempt.clientSessionId,
+      exerciseId: state.selectedExercise,
+      exerciseName: EXERCISES[state.selectedExercise].name,
+      exerciseType: isPlank ? 'duration' : 'reps',
+      completed: Boolean(completed),
+      completedReps: isPlank ? null : Math.max(0, state.count ?? 0),
+      targetReps: isPlank ? null : target,
+      targetDurationSeconds: isPlank ? target : null,
+      durationSeconds: isPlank
+        ? heldSeconds
+        : Math.max(0, Math.round((endedAtMs - attempt.runningSinceMs) / 1000)),
+      startedAt: new Date(attempt.runningSinceMs).toISOString(),
+      completedAt: completed ? new Date(endedAtMs).toISOString() : null,
+    };
+  }
+
+  function notifyWorkoutAttemptEnded(attempt) {
+    if (!attempt) {
+      return;
+    }
+    try {
+      const result = onWorkoutAttemptEnded(attempt);
+      if (result && typeof result.then === 'function') {
+        result.catch((error) => {
+          globalThis.console?.error?.('[SabiBody] Saving the workout failed.', error);
+        });
+      }
+    } catch (error) {
+      globalThis.console?.error?.('[SabiBody] Saving the workout failed.', error);
+    }
+  }
+
   function snapshot() {
     const isBusy = state.workoutStatus === 'loading';
     const active = state.workoutStatus === 'running';
@@ -317,6 +393,9 @@ export function createWorkoutController({
   }
 
   function update(changes) {
+    if (workoutAttempt && workoutAttempt.runningSinceMs === null && changes.workoutStatus === 'running') {
+      workoutAttempt.runningSinceMs = Number(now());
+    }
     state = { ...state, ...changes };
     onState(snapshot());
   }
@@ -513,6 +592,7 @@ export function createWorkoutController({
       achieved: target,
       completedAt: Date.now(),
     };
+    const attempt = takeWorkoutAttempt(true);
     update({
       completedWorkouts: [...state.completedWorkouts, completedWorkout],
       workoutStatus: 'completed',
@@ -531,6 +611,7 @@ export function createWorkoutController({
       target: state.target,
       remaining: 0,
     });
+    notifyWorkoutAttemptEnded(attempt);
   }
 
   function releaseResources({ stopTracker = true } = {}) {
@@ -568,6 +649,7 @@ export function createWorkoutController({
     if (runGeneration !== generation) {
       return;
     }
+    const attempt = takeWorkoutAttempt(false);
     releaseResources();
     interrupted = false;
     invalidateCurrentPhase();
@@ -584,6 +666,7 @@ export function createWorkoutController({
         error?.message ||
         'The camera or pose model could not start. Check camera access and try again.',
     });
+    notifyWorkoutAttemptEnded(attempt);
   }
 
   function handleTrackEnded(track, runGeneration) {
@@ -635,6 +718,69 @@ export function createWorkoutController({
   }
 
   function processPose(landmarks, timestamp, worldLandmarks = []) {
+    if (state.workoutStatus === 'loading') {
+      if (state.cameraStatus !== 'ready') {
+        return;
+      }
+
+      const analyzer = analyzers[state.selectedExercise];
+      if (typeof analyzer.checkReady !== 'function') {
+        failStartup(
+          new Error(`The ${state.selectedExercise} analyzer does not support start-pose readiness.`),
+          generation,
+        );
+        return;
+      }
+
+      const readiness = analyzer.checkReady(landmarks, timestamp);
+      const personDetected =
+        Array.isArray(landmarks) && landmarks.some((landmark) => isVisible(landmark));
+      const fullBodyVisible = personDetected && hasFullBodyVisible(landmarks);
+      const ready = Boolean(readiness.ready);
+      update({
+        workoutStatus: ready ? 'running' : 'loading',
+        cameraStatus: 'ready',
+        personDetected,
+        fullBodyVisible,
+        exerciseState: ready ? 'ready' : 'positioning',
+        readinessState: ready ? 'tracking' : 'no-pose',
+        readinessReasonId: readiness.rejectionReasonId ?? null,
+        readinessReady: ready,
+        movementPhase: 'positioning',
+        formValid: Boolean(readiness.poseReady),
+        rejectionReasonId: readiness.rejectionReasonId ?? null,
+        diagnosticMetrics: {
+          exercise: readiness.metrics ?? {},
+        },
+        diagnosticLandmarks: diagnosticsEnabled
+          ? serializeLandmarkDiagnostics(landmarks)
+          : [],
+        statusMessage: ready
+          ? 'Camera and pose tracking are running.'
+          : 'Position yourself for the exercise and hold still.',
+      });
+
+      if (ready) {
+        if (!countdownAnnounced) {
+          countdownAnnounced = true;
+          setFeedback('workout-countdown');
+          setFeedback('camera-positioning', {}, { spokenOnly: true });
+          const instructionId = EXERCISE_INSTRUCTION_IDS[state.selectedExercise];
+          if (instructionId) {
+            setFeedback(instructionId, {}, { spokenOnly: true });
+          }
+        }
+      } else if (readiness.feedbackId) {
+        setFeedback(readiness.feedbackId);
+      }
+
+      return {
+        readinessReady: ready,
+        formValid: Boolean(readiness.poseReady),
+        rejectionReasonId: readiness.rejectionReasonId ?? null,
+      };
+    }
+
     if (state.workoutStatus !== 'running') {
       return;
     }
@@ -763,6 +909,13 @@ export function createWorkoutController({
         return false;
       }
 
+      update({
+        cameraStatus: 'ready',
+        readinessState: 'no-pose',
+        readinessReasonId: 'no-pose',
+        readinessReady: false,
+        statusMessage: 'Camera is on. Position yourself and hold still to begin.',
+      });
       await createdTracker.start(mediaElements.video, mediaElements.canvas);
       if (runGeneration !== generation) {
         return false;
@@ -772,24 +925,7 @@ export function createWorkoutController({
       }
       if (state.workoutStatus !== 'error') {
         interrupted = false;
-        update({
-          workoutStatus: 'running',
-          cameraStatus: 'ready',
-          readinessState: 'tracking',
-          readinessReasonId: null,
-          readinessReady: true,
-          statusMessage: 'Camera and pose tracking are running.',
-        });
-        if (!countdownAnnounced) {
-          countdownAnnounced = true;
-          setFeedback('workout-countdown');
-          setFeedback('camera-positioning', {}, { spokenOnly: true });
-          const instructionId = EXERCISE_INSTRUCTION_IDS[state.selectedExercise];
-          if (instructionId) {
-            setFeedback(instructionId, {}, { spokenOnly: true });
-          }
-        }
-        return true;
+        return state.workoutStatus === 'running';
       }
       return false;
     } catch (error) {
@@ -805,6 +941,9 @@ export function createWorkoutController({
     if (state.workoutStatus === 'running') {
       return Promise.resolve();
     }
+    if (state.workoutStatus === 'loading') {
+      return Promise.resolve();
+    }
     if (state.workoutStatus === 'paused' && resetProgress) {
       return resume();
     }
@@ -818,6 +957,7 @@ export function createWorkoutController({
     }
     invalidateCurrentPhase();
     if (resetProgress) {
+      beginWorkoutAttempt();
       analyzers[state.selectedExercise].reset();
       workoutSpeechQueue.clearPending();
       update({
@@ -972,6 +1112,7 @@ export function createWorkoutController({
   }
 
   async function end() {
+    const attempt = takeWorkoutAttempt(false);
     generation += 1;
     voiceGeneration += 1;
     startPromise = null;
@@ -1002,6 +1143,7 @@ export function createWorkoutController({
       isFallback: false,
       statusMessage: 'Camera is off. Choose an exercise to begin.',
     });
+    notifyWorkoutAttemptEnded(attempt);
   }
 
   function selectExercise(exerciseId) {
@@ -1255,14 +1397,67 @@ function personalityOptions(selectedPersonality) {
   ).join('');
 }
 
-function mobileSettingsMarkup(state) {
+function accountInitials(name = '') {
+  return String(name).trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || 'S';
+}
+
+function navLinksMarkup(account) {
+  if (!account) {
+    return '';
+  }
+  const authenticated = account.status === 'authenticated';
+  const items = [['home', 'Home', '#/'], ['exercises', 'Exercises', '#/exercises']];
+  if (authenticated) {
+    items.push(
+      ['dashboard', 'Dashboard', '#/dashboard'],
+      ['history', 'Workout History', '#/history'],
+      ['profile', 'Profile', '#/profile'],
+      ['settings', 'Settings', '#/settings'],
+    );
+    if (account.user?.is_admin) {
+      items.push(['admin', 'Admin', '#/admin']);
+    }
+  }
   return `
-    <div class="mobile-settings" data-mobile-settings-root>
+    <nav class="app-nav" aria-label="Main navigation">
+      ${items.map(([id, label, href]) => `<a class="app-nav__link${account.route === id ? ' is-active' : ''}" href="${href}"${account.route === id ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+    </nav>`;
+}
+
+function accountActionsMarkup(account) {
+  if (!account) {
+    return '';
+  }
+  if (account.status === 'authenticated') {
+    const name = account.user?.full_name ?? '';
+    return `
+      <div class="app-nav__account">
+        <a class="app-nav__user" href="#/profile" aria-label="Your profile: ${escapeHtml(name)}">
+          <span class="avatar avatar--sm" aria-hidden="true">${escapeHtml(accountInitials(name))}</span>
+          <span class="app-nav__user-name">${escapeHtml(name.split(/\s+/)[0] || 'Profile')}</span>
+        </a>
+        <button class="button button--quiet button--small" type="button" data-acct-action="logout">Log out</button>
+      </div>`;
+  }
+  if (account.status === 'checking') {
+    return '<div class="app-nav__account" aria-hidden="true"><span class="app-nav__checking"></span></div>';
+  }
+  return `
+    <div class="app-nav__account">
+      <a class="button button--quiet button--small" href="#/login">Log in</a>
+      <a class="button button--primary button--small" href="#/register">Create account</a>
+    </div>`;
+}
+
+function mobileSettingsMarkup(state) {
+  const account = state.account ?? null;
+  return `
+    <div class="mobile-settings${account ? ' mobile-settings--nav' : ''}" data-mobile-settings-root>
       <button
         class="mobile-settings__toggle"
         type="button"
         data-action="toggle-mobile-settings"
-        aria-label="Open language and coach settings"
+        aria-label="${account ? 'Open menu' : 'Open language and coach settings'}"
         aria-controls="mobile-settings"
         aria-expanded="false"
       >
@@ -1270,6 +1465,8 @@ function mobileSettingsMarkup(state) {
         <span>Menu</span>
       </button>
       <div class="mobile-settings__panel" id="mobile-settings" data-mobile-settings data-open="false">
+        ${navLinksMarkup(account)}
+        ${accountActionsMarkup(account)}
         <label class="personality-control">
           <span>Coach style</span>
           <select data-action="personality" aria-label="Choose coaching personality">${personalityOptions(state.personality)}</select>
@@ -1339,9 +1536,88 @@ function goalOptions(exerciseId, selectedTarget) {
   `;
 }
 
+function siteHeaderMarkup(state) {
+  return `
+      <header class="site-header">
+        ${brandLogoMarkup()}
+        <p class="tagline">The sabi-sabi fitness coach</p>
+        ${mobileSettingsMarkup(state)}
+      </header>`;
+}
+
+function heroAccountMarkup(account) {
+  if (!account || account.status === 'checking') {
+    return '';
+  }
+  if (account.status === 'authenticated') {
+    const first = escapeHtml(String(account.user?.full_name ?? '').split(/\s+/)[0] || 'there');
+    return `<p class="welcome__account">Welcome back, ${first}. <a class="text-link" href="#/dashboard">View your dashboard →</a></p>`;
+  }
+  return `<p class="welcome__account">New here? <a class="text-link" href="#/register">Create a free account</a> to save your progress, or <a class="text-link" href="#/login">log in</a>.</p>`;
+}
+
+function howItWorksMarkup(account) {
+  const authenticated = account?.status === 'authenticated';
+  const cta = !account
+    ? ''
+    : authenticated
+      ? `<a class="button button--primary" href="#/exercises">Start exercising</a><a class="button button--quiet" href="#/dashboard">Go to your dashboard</a>`
+      : `<a class="button button--primary" href="#/register">Create free account</a><a class="button button--quiet" href="#/login">Log in</a><a class="button button--quiet" href="#/exercises">Start exercising</a>`;
+  return `
+      <section class="how-it-works" id="how-it-works" aria-labelledby="how-title">
+        <div class="section-heading">
+          <p class="section-heading__eyebrow">How SabiBody works</p>
+          <h2 id="how-title">Your camera becomes your coach</h2>
+        </div>
+        <ol class="how-steps">
+          <li class="how-step">
+            <span class="how-step__number" aria-hidden="true">1</span>
+            <h3>Pick an exercise</h3>
+            <p>Choose from seven guided movements: squats, jumping jacks, plank, push-ups, sit-ups, lunges and high knees. Each one shows a picture and simple instructions first.</p>
+          </li>
+          <li class="how-step">
+            <span class="how-step__number" aria-hidden="true">2</span>
+            <h3>Allow your camera</h3>
+            <p>MediaPipe pose detection finds 33 body points in each camera frame, right in your browser. Your video is never uploaded, recorded or stored.</p>
+          </li>
+          <li class="how-step">
+            <span class="how-step__number" aria-hidden="true">3</span>
+            <h3>Move — we count</h3>
+            <p>A rep counts only after SabiBody sees the full movement, like a squat down and back up. Plank time only adds up while your body stays in line.</p>
+          </li>
+          <li class="how-step">
+            <span class="how-step__number" aria-hidden="true">4</span>
+            <h3>Hear your coach</h3>
+            <p>Voice coaching reads out instructions, announces your reps and cheers you on, so you can keep your eyes off the screen.</p>
+          </li>
+        </ol>
+        <p class="how-it-works__note">SabiBody gives movement cues, not medical advice. Lighting, camera angle and framing affect tracking, so it may sometimes miss or reject a rep. Stop if anything feels uncomfortable.</p>
+        ${cta ? `<div class="how-it-works__cta">${cta}</div>` : ''}
+      </section>`;
+}
+
+function completionSaveMarkup(account) {
+  const save = account?.save;
+  if (!account || !save) {
+    return '';
+  }
+  switch (save.status) {
+    case 'saving':
+      return '<p class="completion-save" role="status"><span class="spinner" aria-hidden="true"></span> Saving to your workout history…</p>';
+    case 'saved':
+      return '<p class="completion-save completion-save--ok" role="status">✓ Saved to your workout history. <a class="text-link" href="#/dashboard">See your progress</a></p>';
+    case 'error':
+      return `<div class="completion-save completion-save--error" role="alert"><p>Your workout finished but couldn’t be saved: ${escapeHtml(save.message)}</p><button class="button button--quiet button--small" type="button" data-acct-action="retry-save">Try saving again</button></div>`;
+    case 'guest':
+      return '<p class="completion-save" role="status">Want to keep your progress? <a class="text-link" href="#/register">Create a free account</a> or <a class="text-link" href="#/login">log in</a> to save future workouts.</p>';
+    default:
+      return '';
+  }
+}
+
 function brandLogoMarkup() {
   return `
-    <a class="brand-logo" href="#home" data-action="home" aria-label="SabiBody home">
+    <a class="brand-logo" href="#/" data-action="home" aria-label="SabiBody home">
       <svg class="brand-logo__mark" viewBox="0 0 44 48" aria-hidden="true">
         <circle cx="25" cy="7" r="4.8" fill="#7bc64c" />
         <path d="M23 14 15 23 7 17M23 14l8-4 7-7" fill="none" stroke="#7bc64c" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.8" />
@@ -1396,6 +1672,8 @@ function renderHome(root, state) {
           <div class="exercise-card__mark" aria-hidden="true">${exercise.mark}</div>
           ${exerciseImageMarkup(exercise, 'exercise-card__image', 'lazy')}
           <h3>${exercise.name}</h3>
+          <p class="exercise-card__description">${exercise.description}</p>
+          <p class="exercise-card__muscles"><strong>Targets:</strong> ${exercise.targetMuscles.join(', ')}</p>
           <p>${exercise.benefits}</p>
           <button class="button button--quiet" type="button" data-action="choose-exercise" data-exercise="${id}">
             Start ${exercise.name}
@@ -1406,11 +1684,7 @@ function renderHome(root, state) {
 
   root.innerHTML = `
     <div class="home-page">
-      <header class="site-header">
-        ${brandLogoMarkup()}
-        <p class="tagline">The sabi-sabi fitness coach</p>
-        ${mobileSettingsMarkup(state)}
-      </header>
+      ${siteHeaderMarkup(state)}
       <p class="storage-warning" data-personality-warning role="status" hidden></p>
       <section class="welcome" aria-labelledby="welcome-title">
         <div class="welcome__copy">
@@ -1425,6 +1699,7 @@ function renderHome(root, state) {
           <button class="button button--primary welcome__action" type="button" data-action="scroll-exercises">
             Start a workout <span aria-hidden="true">↓</span>
           </button>
+          ${heroAccountMarkup(state.account)}
           <p class="welcome__trust">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.7-2.8 8-7 10-4.2-2-7-5.3-7-10V6l7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
             <span>Private by design. <strong>Your camera stays on your device.</strong></span>
@@ -1466,6 +1741,7 @@ function renderHome(root, state) {
           </div>
         </div>
       </section>
+      ${howItWorksMarkup(state.account)}
       <section class="exercises" id="exercise-selection" aria-labelledby="exercises-title">
         <div class="section-heading">
           <p class="section-heading__eyebrow">Choose what feels right</p>
@@ -1513,6 +1789,7 @@ function renderCompletion(root, state) {
           <button class="button button--primary" type="button" data-action="next-workout">Next Workout</button>
           <button class="button button--quiet" type="button" data-action="home">Back to Home</button>
         </div>
+        ${completionSaveMarkup(state.account)}
       </section>
     </main>
   `;
@@ -1568,8 +1845,10 @@ function renderWorkout(root, state) {
           <figcaption>Exercise demonstration picture</figcaption>
         </figure>
         <div class="exercise-instructions__copy">
-          <p class="section-heading__eyebrow">Why this exercise</p>
+          <p class="section-heading__eyebrow">About this exercise</p>
+          <p class="exercise-instructions__description">${exercise.description}</p>
           <p class="exercise-instructions__benefits">${exercise.benefits}</p>
+          <p class="exercise-instructions__muscles"><strong>Target muscles:</strong> ${exercise.targetMuscles.join(', ')}</p>
           <h2 id="exercise-instructions-title">How to do it</h2>
           <p>${exercise.instructions}</p>
         </div>
@@ -1834,6 +2113,9 @@ export function mountApp(root, {
   audioCoach = createVoiceClient({ endpoint: '/api/coach/audio' }),
   voicePlayback,
   controllerOptions = {},
+  authService: providedAuthService,
+  accountData: providedAccountData,
+  accounts = Boolean(providedAuthService) || (typeof globalThis.location?.hash === 'string' && typeof globalThis.fetch === 'function'),
 } = {}) {
   if (!root) {
     throw new Error('Cannot start Sabi Body: the app root (#app) was not found.');
@@ -1843,7 +2125,32 @@ export function mountApp(root, {
   let currentScreen = null;
   let latestState = makeInitialState();
   let controller;
+  let lastRouteName = null;
+  const authService = accounts ? (providedAuthService ?? createAuthService()) : null;
+  const accountController = authService
+    ? createAccountController({
+      authService,
+      accountData: providedAccountData ?? createAccountData(authService.api),
+      view: ownerDocument?.defaultView ?? globalThis,
+      requestRender: () => {
+        if (controller) {
+          render(controller.getState?.() ?? latestState);
+        }
+      },
+    })
+    : null;
 
+  function accountInfo() {
+    if (!accountController) {
+      return null;
+    }
+    return {
+      status: accountController.authStatus(),
+      user: accountController.user(),
+      route: accountController.route().name,
+      save: accountController.saveState(),
+    };
+  }
   function setMobileSettingsOpen(open) {
     const toggle = root.querySelector('[data-action="toggle-mobile-settings"]');
     const panel = root.querySelector('[data-mobile-settings]');
@@ -1925,25 +2232,46 @@ export function mountApp(root, {
       && Boolean(matchMedia.call(view ?? globalThis, MOBILE_WORKOUT_QUERY).matches);
   }
 
-  function render(state) {
-    latestState = state;
-    const screen = state.view === 'home'
-      ? 'home'
-      : state.workoutStatus === 'completed'
-        ? 'completion'
-        : 'workout';
+  function render(incomingState) {
+    latestState = incomingState;
+    const account = accountInfo();
+    const state = account ? { ...incomingState, account } : incomingState;
+    const workoutBusy = ['loading', 'running', 'paused', 'completed'].includes(state.workoutStatus);
+    const showAccountPage = Boolean(accountController?.isActive()) && state.view === 'home' && !workoutBusy;
+    const userKey = account ? `${account.status}:${account.user?.full_name ?? ''}:${account.user?.is_admin ?? ''}:${account.route}` : '';
+    const screen = showAccountPage
+      ? `account:${accountController.version()}`
+      : state.view === 'home'
+        ? `home:${userKey}`
+        : state.workoutStatus === 'completed'
+          ? `completion:${account?.save?.status ?? ''}`
+          : 'workout';
     if (screen !== currentScreen) {
+      // Navigation closes the menu (see the hashchange handler); a data refresh of
+      // the same account page must not close it while the user is using it.
+      const menuWasOpen = root.querySelector?.('[data-mobile-settings]')?.dataset?.open === 'true';
       setMobileSettingsOpen(false);
       setMobileVoiceSettingsOpen(false);
       if (!['loading', 'running', 'paused'].includes(state.workoutStatus)) {
         exitFullscreenIfOwned(root.querySelector('.workout-page'));
       }
+      const previousScreen = currentScreen ?? '';
       currentScreen = screen;
-      if (screen === 'home') {
+      if (screen.startsWith('account:')) {
+        accountController.render(root, siteHeaderMarkup(state));
+        if (menuWasOpen && previousScreen.startsWith('account:')) {
+          setMobileSettingsOpen(true);
+        }
+      } else if (screen.startsWith('home')) {
         renderHome(root, state);
-      } else if (screen === 'completion') {
+        if (account?.route === 'exercises' && lastRouteName !== 'exercises') {
+          root.querySelector('#exercise-selection')?.scrollIntoView?.({ block: 'start' });
+        }
+      } else if (screen.startsWith('completion')) {
         renderCompletion(root, state);
-        root.querySelector('[data-completion-title]')?.focus?.();
+        if (!previousScreen.startsWith('completion')) {
+          root.querySelector('[data-completion-title]')?.focus?.();
+        }
       } else {
         renderWorkout(root, state);
         updateWorkout(root, state);
@@ -1951,6 +2279,8 @@ export function mountApp(root, {
       }
     } else if (screen === 'workout') {
       updateWorkout(root, state);
+    } else if (screen.startsWith('completion') || screen.startsWith('account:')) {
+      return;
     } else {
       const selector = root.querySelector('[data-action="language"]');
       if (selector && selector.value !== state.language) {
@@ -1962,6 +2292,7 @@ export function mountApp(root, {
       }
     }
 
+    lastRouteName = account?.route ?? null;
     const workoutActive = ['loading', 'running', 'paused'].includes(state.workoutStatus);
     root.querySelector('.workout-page')?.classList?.toggle('is-active', workoutActive);
     ownerDocument?.body?.classList?.toggle('workout-active', workoutActive);
@@ -1990,6 +2321,7 @@ export function mountApp(root, {
     },
   });
   controller = createWorkoutController({
+    onWorkoutAttemptEnded: (attempt) => accountController?.saveWorkoutAttempt(attempt),
     ...controllerOptions,
     onState: render,
     speechCoach: coach,
@@ -2002,6 +2334,10 @@ export function mountApp(root, {
   });
 
   root.addEventListener('click', (event) => {
+    if (accountController?.handleClick(event)) {
+      setMobileSettingsOpen(false);
+      return;
+    }
     const button = event.target.closest?.('[data-action]');
     if (!button) {
       return;
@@ -2020,6 +2356,7 @@ export function mountApp(root, {
         break;
       }
       case 'choose-exercise':
+        accountController?.clearSaveState();
         controller.selectExercise(button.dataset.exercise);
         break;
       case 'start':
@@ -2082,7 +2419,14 @@ export function mountApp(root, {
     }
   });
 
+  root.addEventListener('submit', (event) => {
+    accountController?.handleSubmit(event);
+  });
+
   root.addEventListener('change', (event) => {
+    if (accountController?.handleChange(event)) {
+      return;
+    }
     const control = event.target;
     if (control.matches?.('[data-action="language"]')) {
       controller.setLanguage(control.value);
@@ -2103,6 +2447,9 @@ export function mountApp(root, {
   });
 
   root.addEventListener('input', (event) => {
+    if (accountController?.handleInput(event)) {
+      return;
+    }
     const control = event.target;
     if (
       control.matches?.('[data-action="goal-custom"]') &&
@@ -2128,6 +2475,21 @@ export function mountApp(root, {
     });
   }
 
+  const accountView = ownerDocument?.defaultView ?? globalThis;
+  if (accountController) {
+    accountView?.addEventListener?.('hashchange', () => {
+      setMobileSettingsOpen(false);
+      const status = controller.getState().workoutStatus;
+      if (status === 'completed') {
+        controller.goToExerciseChooser();
+      } else if (!['loading', 'running', 'paused'].includes(status) && controller.getState().view !== 'home') {
+        controller.goHome();
+      }
+      render(controller.getState());
+    });
+  }
+
   render(latestState);
+  accountController?.start();
   return controller;
 }

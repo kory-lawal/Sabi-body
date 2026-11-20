@@ -1,6 +1,6 @@
 # SabiBody Supabase and FastAPI Authentication Boundary
 
-**Status:** Design draft for user review.
+**Status:** Approved.
 
 ## Goal
 

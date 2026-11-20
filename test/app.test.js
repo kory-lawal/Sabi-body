@@ -4,9 +4,105 @@ import test from 'node:test';
 import { createPlankAnalyzer } from '../src/exercises/plank.js';
 import { EXERCISE_INSTRUCTION_IDS, translateMessage } from '../src/feedback/messages.js';
 import { createSpeechQueue } from '../src/feedback/speech-queue.js';
-import { createWorkoutController, mountApp, voiceOptions } from '../src/ui/app.js';
+import {
+  createWorkoutController as createWorkoutControllerImplementation,
+  mountApp as mountAppImplementation,
+  voiceOptions,
+} from '../src/ui/app.js';
 import { EXERCISES } from '../src/ui/exercise-content.js';
 import viteConfig from '../vite.config.js';
+
+const expectedExerciseIds = [
+  'squats',
+  'jumping-jacks',
+  'plank',
+  'push-ups',
+  'sit-ups',
+  'lunges',
+  'high-knees',
+];
+const expectedDefaultTargets = {
+  squats: 10,
+  'jumping-jacks': 10,
+  plank: 30,
+  'push-ups': 5,
+  'sit-ups': 6,
+  lunges: 10,
+  'high-knees': 10,
+};
+
+function createTestReadinessCheck() {
+  let readySince = null;
+  let lastTimestamp = null;
+  return (_landmarks, timestamp) => {
+    if (!Number.isFinite(timestamp)) {
+      readySince = null;
+      lastTimestamp = null;
+      return { poseReady: false, ready: false, metrics: {} };
+    }
+
+    if (
+      lastTimestamp === null ||
+      timestamp < lastTimestamp ||
+      timestamp - lastTimestamp >= 500
+    ) {
+      readySince = timestamp;
+    }
+    lastTimestamp = timestamp;
+    return {
+      poseReady: true,
+      ready: timestamp - readySince >= 400,
+      feedbackId: null,
+      rejectionReasonId: null,
+      metrics: {},
+    };
+  };
+}
+
+function addTestReadiness(analyzers, createCheck = createTestReadinessCheck) {
+  for (const analyzer of Object.values(analyzers)) {
+    if (typeof analyzer.checkReady !== 'function') {
+      analyzer.checkReady = createCheck();
+    }
+  }
+  return analyzers;
+}
+
+function createWorkoutController(options = {}) {
+  if (typeof options.createAnalyzers !== 'function') {
+    return createWorkoutControllerImplementation(options);
+  }
+
+  return createWorkoutControllerImplementation({
+    ...options,
+    createAnalyzers() {
+      return addTestReadiness(options.createAnalyzers());
+    },
+  });
+}
+
+function mountApp(root, options = {}) {
+  const controllerOptions = options.controllerOptions;
+  if (typeof controllerOptions?.createAnalyzers !== 'function') {
+    return mountAppImplementation(root, options);
+  }
+
+  return mountAppImplementation(root, {
+    ...options,
+    controllerOptions: {
+      ...controllerOptions,
+      createAnalyzers() {
+        return addTestReadiness(controllerOptions.createAnalyzers(), () => () => ({
+          poseReady: true,
+          ready: true,
+          feedbackId: null,
+          rejectionReasonId: null,
+          metrics: {},
+        }));
+      },
+    },
+  });
+}
 
 function createReadyLandmarks(exerciseId) {
   const landmarks = Array.from({ length: 33 }, () => null);
@@ -135,9 +231,10 @@ function createMovementLandmarks(exerciseId) {
 
 function emitReadyFrames(onPose, exerciseId, timestamp = 0) {
   const landmarks = createReadyLandmarks(exerciseId);
-  for (let frame = 0; frame < 3; frame += 1) {
+  for (let frame = 0; frame <= 12; frame += 1) {
     onPose(landmarks, timestamp + frame * 33);
   }
+  onPose(landmarks, timestamp + 400);
 }
 
 function createHarness({
@@ -145,6 +242,8 @@ function createHarness({
   startTracker,
   autoReadiness = true,
   diagnosticsEnabled,
+  onWorkoutAttemptEnded,
+  now,
   createAnalyzers = () => ({
     squats: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
     'jumping-jacks': { reset() {}, update: () => ({ count: 0, state: 'closed' }) },
@@ -234,8 +333,22 @@ function createHarness({
       trackers.push(tracker);
       return tracker;
     },
-    createAnalyzers,
+    createAnalyzers: () => {
+      const analyzers = createAnalyzers();
+      for (const analyzer of Object.values(analyzers)) {
+        analyzer.checkReady ??= () => ({
+          poseReady: true,
+          ready: true,
+          feedbackId: null,
+          rejectionReasonId: null,
+          metrics: {},
+        });
+      }
+      return analyzers;
+    },
     speechQueue: createSpeechQueue({ delay: async () => {} }),
+    ...(onWorkoutAttemptEnded ? { onWorkoutAttemptEnded } : {}),
+    ...(now ? { now } : {}),
     ...(diagnosticsEnabled === undefined ? {} : { diagnosticsEnabled }),
     translateMessage: () => ({ text: 'Ready', isFallback: false }),
     speechCoach: { setEnabled() {}, speak() {}, cancel() {} },
@@ -422,7 +535,8 @@ test('selected goal becomes the actual target for workout completion', async () 
   assert.equal(harness.controller.getState().progressTarget, 3);
   await harness.controller.start();
   const onPose = harness.trackers[0].callbacks.onPose;
-  for (let frame = 0; frame < 3; frame += 1) {
+  onPose(createReadyLandmarks('squats'), 0);
+  for (let frame = 1; frame <= 3; frame += 1) {
     onPose(createReadyLandmarks('squats'), frame * 33);
   }
 
@@ -514,6 +628,7 @@ test('a selected 30-rep goal stays visible and drives the active workout target'
   assert.equal(progressValue.textContent, '0 / 30 reps');
   assert.match(progressMeta.textContent, /^0\/30 • 30 remaining • 0%$/);
 
+  onPose(createReadyLandmarks('squats'), 0);
   onPose(createReadyLandmarks('squats'), 33);
   assert.equal(progressValue.textContent, '1 / 30 reps');
   assert.match(progressMeta.textContent, /^1\/30 • 29 remaining • 3%$/);
@@ -801,7 +916,7 @@ test('mobile Start requests fullscreen without waiting for it before starting', 
   assert.ok(bodyClasses.has('workout-active'));
   assert.ok(pageClasses.has('is-active'));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(controller.getState().workoutStatus, 'running');
+  assert.equal(controller.getState().workoutStatus, 'loading');
 
   controller.reset();
   assert.ok(bodyClasses.has('workout-active'));
@@ -885,7 +1000,7 @@ test('fullscreen rejection and unsupported fullscreen keep mobile camera startup
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(cameraStarted, true);
-    assert.equal(controller.getState().workoutStatus, 'running');
+    assert.equal(controller.getState().workoutStatus, 'loading');
     assert.equal(status.hidden, false);
     assert.match(status.textContent, /Fullscreen unavailable/);
     await controller.end();
@@ -995,6 +1110,7 @@ test('workout completion exits mobile fullscreen and releases scroll lock', asyn
   assert.equal(document.fullscreenElement, page);
   assert.ok(bodyClasses.has('workout-active'));
 
+  onPose(createReadyLandmarks('squats'), 0);
   for (let frame = 0; frame < 5 && controller.getState().workoutStatus === 'running'; frame += 1) {
     onPose(createReadyLandmarks('squats'), frame * 33);
   }
@@ -1025,8 +1141,9 @@ test('repeated Start actions share one camera stream and tracker loop', async ()
   assert.equal(harness.controller.getState().workoutStatus, 'running');
 });
 
-test('workout starts analyzing when tracker startup completes without a ready pose', async () => {
+test('workout remains positioning until the selected analyzer confirms a stable start pose', async () => {
   let analyzerCalls = 0;
+  let readinessCalls = 0;
   let observedLandmarks;
   let observedWorldLandmarks;
   const harness = createHarness({
@@ -1035,6 +1152,16 @@ test('workout starts analyzing when tracker startup completes without a ready po
       squats: {
         reset() {},
         invalidatePhase() {},
+        checkReady(_landmarks, timestamp) {
+          readinessCalls += 1;
+          return {
+            poseReady: true,
+            ready: timestamp >= 400,
+            feedbackId: null,
+            rejectionReasonId: null,
+            metrics: {},
+          };
+        },
         update(landmarks, _timestamp, worldLandmarks) {
           analyzerCalls += 1;
           observedLandmarks = landmarks;
@@ -1046,10 +1173,23 @@ test('workout starts analyzing when tracker startup completes without a ready po
   });
 
   await harness.controller.start();
-  assert.equal(harness.controller.getState().workoutStatus, 'running');
+  assert.equal(harness.controller.getState().workoutStatus, 'loading');
+  assert.equal(harness.controller.getState().cameraStatus, 'ready');
+  assert.equal(harness.controller.getState().readinessReady, false);
   const landmarks = [];
   const worldLandmarks = [{ x: 0.1, y: 0.2, z: 0.3 }];
-  harness.trackers[0].callbacks.onPose(landmarks, 33, worldLandmarks);
+  harness.trackers[0].callbacks.onPose(landmarks, 0, worldLandmarks);
+  harness.trackers[0].callbacks.onPose(landmarks, 399, worldLandmarks);
+  assert.equal(harness.controller.getState().workoutStatus, 'loading');
+  assert.equal(analyzerCalls, 0);
+  assert.equal(harness.controller.getState().count, 0);
+
+  harness.trackers[0].callbacks.onPose(landmarks, 400, worldLandmarks);
+  assert.equal(harness.controller.getState().workoutStatus, 'running');
+  assert.equal(analyzerCalls, 0);
+  assert.equal(readinessCalls, 3);
+
+  harness.trackers[0].callbacks.onPose(landmarks, 433, worldLandmarks);
   assert.equal(analyzerCalls, 1);
   assert.equal(observedLandmarks, landmarks);
   assert.equal(observedWorldLandmarks, worldLandmarks);
@@ -1070,6 +1210,7 @@ test('goal completion follows analyzer count without form-valid gating', async (
   });
   harness.controller.setGoal(1);
   await harness.controller.start();
+  harness.trackers[0].callbacks.onPose(createReadyLandmarks('squats'), 0);
   harness.trackers[0].callbacks.onPose(createReadyLandmarks('squats'), 33);
   assert.equal(harness.controller.getState().workoutStatus, 'completed');
   assert.equal(harness.controller.getState().completedWorkouts.length, 1);
@@ -1272,11 +1413,11 @@ test('plank tracking loss preserves earned time in the controller', async () => 
   const onPose = harness.trackers[0].callbacks.onPose;
   const readyPose = createReadyLandmarks('plank');
   emitReadyFrames(onPose, 'plank', 1000);
-  onPose(readyPose, 1099);
-  onPose(readyPose, 1132);
-  onPose(readyPose, 1165);
-  onPose(readyPose, 1400);
   onPose(readyPose, 1433);
+  onPose(readyPose, 1700);
+  onPose(readyPose, 1800);
+  onPose(readyPose, 1833);
+  onPose(readyPose, 1866);
   const earnedTime = harness.controller.getState().elapsedMs;
   assert.ok(earnedTime > 0);
 
@@ -1419,12 +1560,13 @@ test('quiet coach speaks essential corrections but not general praise', async ()
   await controller.start();
   emitReadyFrames(onPose, 'squats', 1000);
   onPose(createReadyLandmarks('squats'), 1100);
+  onPose(createReadyLandmarks('squats'), 1133);
 
   await flushSpeechQueue();
   assert.deepEqual(spoken.map(([messageId]) => messageId), [
     'welcome',
-    'adjust-alignment',
     'workout-countdown',
+    'adjust-alignment',
     'camera-positioning',
     'instruction-squats',
   ]);
@@ -1538,7 +1680,6 @@ test('automatic coaching announces valid analyzer counts and transitions to comp
       squats: {
         reset() { count = 0; },
         update() {
-          count += 1;
           return { count, formValid: true, state: 'standing' };
         },
       },
@@ -1681,7 +1822,6 @@ test('English automatic coaching works when the YarnGPT catalogue is unavailable
 
   assert.deepEqual(speechEvents, [
     'welcome',
-    'return-to-start',
     'workout-countdown',
     'camera-positioning',
     'instruction-squats',
@@ -2104,8 +2244,12 @@ test('automatic coaching speaks contextual feedback and valid repetition counts'
   assert.ok(speechEvents.some(({ messageId }) => messageId === 'repetition-count'));
 });
 
-test('workout instructions use the selected exercise phrase for all six exercises', async () => {
-  const exercises = Object.entries(EXERCISE_INSTRUCTION_IDS);
+test('workout instructions use the selected exercise phrase for all seven supported exercises', async () => {
+  assert.deepEqual(Object.keys(EXERCISES), expectedExerciseIds);
+  const exercises = expectedExerciseIds.map((exerciseId) => [
+    exerciseId,
+    EXERCISE_INSTRUCTION_IDS[exerciseId],
+  ]);
   for (const [exerciseId, instructionId] of exercises) {
     const speechEvents = [];
     let onPose;
@@ -2136,6 +2280,7 @@ test('workout instructions use the selected exercise phrase for all six exercise
         'push-ups': { reset() {}, update: () => ({ count: 0, state: 'top' }) },
         'sit-ups': { reset() {}, update: () => ({ count: 0, state: 'lowered' }) },
         lunges: { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
+        'high-knees': { reset() {}, update: () => ({ count: 0, state: 'standing' }) },
       }),
     });
     controller.selectExercise(exerciseId);
@@ -2153,6 +2298,22 @@ test('workout instructions use the selected exercise phrase for all six exercise
       }
     }
   }
+});
+
+test('all seven supported exercises have wired analyzers and retain their default goals', () => {
+  const controller = createWorkoutController({ video: {}, canvas: {} });
+  const exerciseIds = Object.keys(EXERCISES);
+  assert.deepEqual(exerciseIds, expectedExerciseIds);
+
+  for (const exerciseId of exerciseIds) {
+    assert.doesNotThrow(() => controller.selectExercise(exerciseId));
+    assert.equal(controller.getState().selectedExercise, exerciseId);
+    assert.equal(controller.getState().target, expectedDefaultTargets[exerciseId]);
+  }
+
+  const selectedExercise = controller.getState().selectedExercise;
+  assert.equal(controller.selectExercise('unsupported-exercise'), false);
+  assert.equal(controller.getState().selectedExercise, selectedExercise);
 });
 
 test('workout speech remains English-only while non-English catalog data stays intact', async () => {
@@ -2422,11 +2583,15 @@ test('pausing a plank excludes the paused interval from elapsed time', async () 
   const landmarks = createReadyLandmarks('plank');
   const baseTime = globalThis.performance?.now?.() ?? Date.now();
   emitReadyFrames(onPose, 'plank', baseTime);
-  onPose(landmarks, baseTime + 100);
-  onPose(landmarks, baseTime + 200);
-  onPose(landmarks, baseTime + 300);
-  onPose(landmarks, baseTime + 400);
+  onPose(landmarks, baseTime + 433);
+  onPose(landmarks, baseTime + 466);
   onPose(landmarks, baseTime + 500);
+  onPose(landmarks, baseTime + 600);
+  onPose(landmarks, baseTime + 700);
+  onPose(landmarks, baseTime + 800);
+  onPose(landmarks, baseTime + 833);
+  onPose(landmarks, baseTime + 866);
+  onPose(landmarks, baseTime + 900);
   const earnedTime = harness.controller.getState().elapsedMs;
   assert.ok(earnedTime > 0);
 
@@ -2507,10 +2672,15 @@ test('Home navigation ends an active workout and releases its camera', async () 
   assert.equal(harness.trackers[0].stopCalls, 1);
 });
 
-test('Vite proxies auth and coaching routes, not shared frontend source imports', () => {
-  assert.deepEqual(Object.keys(viteConfig.server.proxy), ['/api/auth', '/api/coach']);
-  assert.equal(viteConfig.server.proxy['/api/auth'].target, 'http://127.0.0.1:8000');
-  assert.equal(viteConfig.server.proxy['/api/coach'].target, 'http://127.0.0.1:8000');
+test('Vite proxies API routes to FastAPI, not shared frontend source imports', () => {
+  const [pattern] = Object.keys(viteConfig.server.proxy);
+  assert.equal(Object.keys(viteConfig.server.proxy).length, 1);
+  assert.equal(viteConfig.server.proxy[pattern].target, 'http://127.0.0.1:8000');
+  const proxied = new RegExp(pattern);
+  for (const path of ['/api/auth/refresh', '/api/workouts', '/api/coach/audio', '/api/account/me']) {
+    assert.ok(proxied.test(path), path);
+  }
+  assert.equal(proxied.test('/api/src/shared/coaching-messages.js'), false);
 });
 
 test('squat workout instructions require a side-on view with visible joints', () => {
@@ -2541,7 +2711,7 @@ test('squat workout instructions require a side-on view with visible joints', ()
   assert.doesNotMatch(root.innerHTML, /facing the camera/);
 });
 
-test('home exercise cards show the matching picture and requested benefit', () => {
+test('home exercise cards show matching pictures, descriptions, target muscles and benefits', () => {
   const root = {
     innerHTML: '',
     addEventListener() {},
@@ -2556,6 +2726,8 @@ test('home exercise cards show the matching picture and requested benefit', () =
 
   for (const exercise of Object.values(EXERCISES)) {
     assert.ok(root.innerHTML.includes(`src="${exercise.media.src}"`));
+    assert.ok(root.innerHTML.includes(exercise.description));
+    assert.ok(root.innerHTML.includes(exercise.targetMuscles.join(', ')));
     assert.ok(root.innerHTML.includes(exercise.benefits));
     assert.ok(root.innerHTML.includes(`alt="${exercise.media.alt}"`));
   }
@@ -2638,6 +2810,8 @@ test('each exercise opens its matching picture and instructions before Start', a
     click('home');
     click('choose-exercise', { exercise: exerciseId });
     assert.ok(root.innerHTML.includes(`src="${exercise.media.src}"`));
+    assert.ok(root.innerHTML.includes(exercise.description));
+    assert.ok(root.innerHTML.includes(exercise.targetMuscles.join(', ')));
     assert.ok(root.innerHTML.includes(exercise.benefits));
     assert.ok(root.innerHTML.includes(exercise.instructions));
     assert.ok(root.innerHTML.includes('data-action="start"'));
@@ -2650,4 +2824,78 @@ test('each exercise opens its matching picture and instructions before Start', a
   assert.equal(cameraStarts, 1);
   assert.ok(video.srcObject);
   await controller.end();
+});
+
+test('workout attempts are reported once: completed reps, Plank seconds and manual exits', async () => {
+  const attempts = [];
+  let clock = Date.parse('2026-11-20T08:00:00Z');
+  let count = 0;
+  let elapsedMs = 0;
+  const analyzers = () => ({
+    squats: { reset() {}, invalidatePhase() {}, update: () => ({ count, state: 'standing' }) },
+    plank: { reset() {}, invalidatePhase() {}, update: () => ({ elapsedMs, active: true, formValid: true, state: 'aligned' }) },
+  });
+  const harness = createHarness({
+    autoReadiness: false,
+    createAnalyzers: analyzers,
+    onWorkoutAttemptEnded: (attempt) => attempts.push(attempt),
+    now: () => clock,
+  });
+  harness.controller.setGoal(2);
+  await harness.controller.start();
+  emitReadyFrames(harness.trackers[0].callbacks.onPose, 'squats', 0);
+  assert.equal(harness.controller.getState().workoutStatus, 'running');
+  clock += 40_000;
+  count = 2;
+  harness.trackers[0].callbacks.onPose(createReadyLandmarks('squats'), 900);
+  assert.equal(harness.controller.getState().workoutStatus, 'completed');
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].completed, true);
+  assert.equal(attempts[0].completedReps, 2);
+  assert.equal(attempts[0].targetReps, 2);
+  assert.equal(attempts[0].durationSeconds, 40);
+  assert.equal(attempts[0].startedAt, '2026-11-20T08:00:00.000Z');
+  assert.match(attempts[0].clientSessionId, /^[A-Za-z0-9-]{8,64}$/);
+
+  // Plank stores held seconds, not wall-clock time.
+  harness.controller.selectExercise('plank');
+  harness.controller.setGoal(30);
+  await harness.controller.start();
+  emitReadyFrames(harness.trackers[1].callbacks.onPose, 'plank', 2000);
+  elapsedMs = 12_400;
+  clock += 90_000;
+  harness.trackers[1].callbacks.onPose(createReadyLandmarks('plank'), 2600);
+  await harness.controller.end();
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[1].exerciseType, 'duration');
+  assert.equal(attempts[1].completed, false);
+  assert.equal(attempts[1].durationSeconds, 12);
+  assert.equal(attempts[1].targetDurationSeconds, 30);
+  assert.equal(attempts[1].completedReps, null);
+  assert.notEqual(attempts[1].clientSessionId, attempts[0].clientSessionId);
+
+  // Ending again does not report the same attempt twice.
+  await harness.controller.end();
+  assert.equal(attempts.length, 2);
+});
+
+test('camera failures and workouts that never start tracking are not reported', async () => {
+  const attempts = [];
+  const failing = createHarness({
+    startCamera: async () => {
+      throw new Error('Camera permission denied.');
+    },
+    onWorkoutAttemptEnded: (attempt) => attempts.push(attempt),
+  });
+  await failing.controller.start();
+  assert.equal(failing.controller.getState().workoutStatus, 'error');
+
+  const positioning = createHarness({
+    autoReadiness: false,
+    onWorkoutAttemptEnded: (attempt) => attempts.push(attempt),
+  });
+  await positioning.controller.start();
+  assert.equal(positioning.controller.getState().workoutStatus, 'loading');
+  await positioning.controller.end();
+  assert.deepEqual(attempts, []);
 });

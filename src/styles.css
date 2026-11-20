@@ -696,6 +696,15 @@ input:focus-visible,
   line-height: 1.58;
 }
 
+.exercise-card__muscles {
+  font-size: 0.86rem;
+}
+
+.exercise-card__muscles strong,
+.exercise-instructions__muscles strong {
+  color: var(--forest-deep);
+}
+
 .exercise-card .button {
   margin-top: auto;
   width: 100%;
@@ -813,6 +822,17 @@ input:focus-visible,
   margin: 0.55rem 0 0;
   color: var(--muted);
   line-height: 1.65;
+}
+
+.exercise-instructions__description,
+.exercise-instructions__muscles {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.exercise-instructions__muscles {
+  font-size: 0.9rem;
 }
 
 .goal-panel,
@@ -2031,6 +2051,10 @@ input:focus-visible,
     line-height: 1.42;
   }
 
+  .exercise-card__muscles {
+    font-size: 0.78rem;
+  }
+
   .exercise-card .button {
     min-height: 2.75rem;
   }
@@ -2086,7 +2110,9 @@ input:focus-visible,
   }
 
   .exercise-instructions__copy > p:last-child,
-  .exercise-instructions__benefits {
+  .exercise-instructions__benefits,
+  .exercise-instructions__description,
+  .exercise-instructions__muscles {
     margin-top: 0.3rem;
     font-size: 0.76rem;
     line-height: 1.42;
@@ -2203,6 +2229,10 @@ input:focus-visible,
   .exercise-card p {
     font-size: 0.78rem;
     line-height: 1.38;
+  }
+
+  .exercise-card__muscles {
+    font-size: 0.72rem;
   }
 
   .exercise-card .button {

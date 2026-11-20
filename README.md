@@ -1,9 +1,9 @@
 # Sabi Body
 
 Sabi Body is a browser-based movement coach for squats, jumping jacks, planks,
-push-ups, sit-ups, and lunges. It provides simple on-screen cues and movement
-tracking; it is not a medical, diagnostic, or rehabilitation tool. Move at a
-pace that feels comfortable to you.
+push-ups, sit-ups, lunges, and high knees. It provides simple on-screen cues
+and movement tracking; it is not a medical, diagnostic, or rehabilitation
+tool. Move at a pace that feels comfortable to you.
 
 ## Requirements
 
@@ -48,8 +48,9 @@ When a workout starts, the browser requests a user-facing video stream with no
 audio. MediaPipe Tasks Vision loads its WASM runtime and the Pose Landmarker Lite
 model, then infers one pose at a time from new camera frames in `VIDEO` mode.
 The app draws visible pose points and connecting lines over the mirrored camera
-preview on a Canvas. Model/WASM assets are downloaded from their configured
-CDN/model hosts when tracking initializes; this requires network access.
+preview on a Canvas. The MediaPipe WASM runtime and pose model are served by
+the app itself from `public/mediapipe/wasm/` and `public/models/`, and are
+fetched from the site when tracking initializes.
 
 The counters are landmark-based movement cues, not a guarantee of correct form
 or a medical assessment. They require sufficiently visible landmarks, so
@@ -100,6 +101,14 @@ of the image width for planks. Shoulder/hip width ratios provide a conservative
   1.5 times its vertical span. Only valid alignment contributes time; tracking
   loss pauses the timer, and a single interval contributes at most 200 ms.
 
+High Knees uses alternating leg movements and a complete-cycle check:
+
+- **High Knees:** Alternately lift each knee to hip height and return to a
+  neutral stance. The app requires a stable exercise-specific starting pose
+  before the countdown.
+Automated tests use synthetic landmarks; they do not establish real-camera
+accuracy or validate form for every body and camera setup.
+
 In development mode, the camera panel includes pose diagnostics for readiness,
 form validity, movement phase, rejection reason, and measured values. The
 skeleton is amber while positioning, green when the current form is accepted,
@@ -129,61 +138,111 @@ coaching text is read from the local phrase catalog, and spoken English uses
 the browser's speech synthesis; coaching text is not sent to ChatGPT or
 YarnGPT. The app may load the existing YarnGPT voice catalogue, but English
 speech does not depend on that service being available. Camera frames, pose
-landmarks, and microphone audio are not sent to YarnGPT. Guest workouts are not
-stored. When Supabase is configured and a user signs in, the app stores their
-profile, workout attempts (including incomplete attempts), and reminder
-preferences in their account. Camera footage and pose landmarks are never
-stored with that history.
+landmarks, and microphone audio are not sent to YarnGPT.
 
-## Accounts and workout history
+When a signed-in user finishes or leaves a workout, only the workout summary is
+saved (exercise, reps or plank seconds, target, duration, timestamps). Camera
+frames and pose landmarks are never sent to the server.
 
-Supabase account features are optional; guest workouts remain available without
-configuration. To enable accounts:
+## Accounts, workout history and reminders
 
-This project is a Vite browser app, not a Next.js app. It uses the already
-installed `@supabase/supabase-js` browser client; Next.js-only
-`@supabase/ssr` helpers and middleware are not applicable here.
+Anyone can open SabiBody and exercise as a guest. Creating a free account adds
+a dashboard, workout history, profile, settings and email reminders. The
+database is **Neon PostgreSQL**, reached only by the FastAPI backend through
+SQLAlchemy; the browser never sees the connection string. There is no Supabase.
 
-1. Copy `.env.example` to `.env.local`.
-2. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the Supabase
-   project URL and **public publishable key**. These values are included in
-   the browser bundle. Never put a Supabase service-role key or other secret in
-   a `VITE_` variable. The previous `VITE_SUPABASE_ANON_KEY` name remains
-   supported for existing local setups. In production, set `VITE_FRONTEND_URL`
-   to the deployed frontend origin; local confirmation redirects use Vite's
-   current origin and do not require this variable.
-3. Review the complete repository script
-   [`supabase/migrations/20261117020000_create_sabibody_account_data.sql`](supabase/migrations/20261117020000_create_sabibody_account_data.sql)
-   and run it in the Supabase SQL Editor as the project owner. The migration is
-   only a local SQL file until the owner applies it; this repository does not
-   apply it to the remote project.
-4. Enable email/password authentication in Supabase Auth. Configure the
-   project's site URL and allowed redirect URLs for `http://localhost:5176/**`
-   and the deployed HTTPS origin (for example `https://your-domain.example/**`).
-   Set the production site URL to the deployed frontend origin. Keep the
-   confirmation email template pointed at Supabase's `{{ .ConfirmationURL }}`
-   so the configured redirect is honored.
-5. Restart the Vite development server or rebuild/redeploy after changing the
-   environment values.
+Pages (hash routes, so Vercel needs no rewrites): `#/` home, `#/exercises`,
+`#/register`, `#/login`, `#/forgot-password`, `#/reset-password`,
+`#/verify-email`, and signed-in `#/dashboard`, `#/history`, `#/profile`,
+`#/settings`, `#/admin` (administrators only).
 
-The script defines `profiles`, `workout_sessions`, and
-`reminder_preferences` for user-owned data, plus a private, empty `admin_users`
-table. It defines auth-user profile triggers, row-level security policies, and
-the `get_workout_summary()` RPC. RLS scopes profiles to `id = auth.uid()` and
-workout-session and reminder-preference rows to `user_id = auth.uid()`.
-`admin_users` has RLS enabled, no policies, and no grants to `anon` or
-`authenticated`; it begins empty, and only a trusted project owner may assign
-an admin through the SQL Editor. After running the complete script, inspect
-table columns and constraints, triggers, grants, and policies in the project
-before enabling account features. If Supabase CLI migration history already
-marks this file as applied, editing the file does not make the CLI rerun it;
-use the SQL Editor to run this repeatable script.
+### How sign-in works
 
-The dashboard and history read actual rows belonging to the signed-in user.
-Supabase Auth persists the browser session and refreshes tokens; account pages
-wait for session restoration and are not shown to unauthenticated users.
-Completed and incomplete workout attempts are saved only for authenticated
-users. Logging out clears private account data from the interface.
+- Passwords are hashed with Argon2id. Email-verification, password-reset and
+  session tokens are random 256-bit values; only their SHA-256 hashes are stored.
+- Login returns a 15-minute access token that the page keeps **in memory only**
+  (never localStorage). A 30-day refresh token is set as an `HttpOnly`,
+  `SameSite=Lax` cookie scoped to `/api/auth` (`Secure` in production).
+- On every page load the app exchanges the cookie for a new access token, so
+  users stay signed in across refreshes and browser restarts. Unticking
+  "Keep me logged in" uses a browser-session cookie (12-hour server limit).
+- Every refresh rotates the token. Replaying an old token outside a 30-second
+  multi-tab grace window revokes all of that user's sessions.
+- Logout revokes the session in the database. Password changes and resets sign
+  out other devices. Sensitive endpoints are rate-limited per IP and per account
+  (in process memory: adequate for one Render instance; per-IP limits can be
+  bypassed by calling Render directly, per-account limits cannot).
+- Protected endpoints derive the user from the verified token only; workout,
+  profile and reminder queries are always scoped to that user. Workouts are
+  validated server-side (an exercise is "completed" only if its target was
+  reached) and de-duplicated by a per-user idempotency key.
+- Administrators are rows in `admin_roles`, granted only server-side:
+  `python -m app.cli grant-admin you@example.com`, or by listing your email in
+  `ADMIN_BOOTSTRAP_EMAILS` (applied after that address is verified). Admin
+  views are recorded in `admin_audit_logs`.
+
+### Database migrations (Alembic)
+
+From `backend/`, with `DATABASE_URL` set:
+
+```powershell
+py -3.10 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m alembic upgrade head      # create/upgrade tables
+.venv\Scripts\python -m app.cli check-db           # list tables and revision
+```
+
+Tables: `users`, `workout_sessions`, `reminder_preferences`,
+`email_verification_tokens`, `password_reset_tokens`, `refresh_sessions`,
+`reminder_delivery_logs`, `admin_roles`, `admin_audit_logs`. The migration
+only creates tables; it never deletes data.
+
+### Backend tests against a real PostgreSQL
+
+`requirements-dev.txt` includes `pgserver`, which bundles a local PostgreSQL:
+
+```powershell
+.venv\Scripts\python -c "import pgserver; s = pgserver.get_server('pgdata', cleanup_mode=None); s.psql('create database sabibody_test;'); print(s.get_uri())"
+$env:TEST_DATABASE_URL = "<printed URI with /sabibody_test instead of /postgres>"
+.venv\Scripts\python -m unittest discover -s tests
+```
+
+### Emails and reminders
+
+Emails go through [Resend](https://resend.com) when `RESEND_API_KEY` and
+`EMAIL_FROM` are set (the sender domain must be verified in Resend). Without
+them, emails are **not delivered**; they are written to the backend log, which
+is useful locally. Settings tells users when delivery is not switched on.
+
+Reminders run when a scheduler calls `POST /api/internal/reminders/run` with
+`Authorization: Bearer $CRON_SECRET`. The included GitHub Actions workflow
+(`.github/workflows/workout-reminders.yml`) does this every 15 minutes once the
+`SABIBODY_API_URL` and `CRON_SECRET` repository secrets are set. A reminder is
+sent only if reminders are on, the user's local time has reached the chosen
+time (and is within 3 hours of it), and they have not completed a workout that
+local day. Each (user, morning/evening, date) is recorded once, so duplicates
+are impossible even if two runs overlap.
+
+### Deployment settings
+
+**Render (backend)** — root directory `backend`:
+
+- Build command: `pip install -r requirements.txt`
+- Pre-deploy command (or prefix the start command):
+  `python -m alembic upgrade head`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Environment: `PYTHON_ENV=production`, `DATABASE_URL`, `AUTH_SECRET_KEY`,
+  `FRONTEND_URL=https://<your-vercel-domain>`,
+  `SABI_ALLOWED_ORIGINS=https://<your-vercel-domain>`, `YARNGPT_API_KEY`,
+  `RESEND_API_KEY`, `EMAIL_FROM`, `CRON_SECRET`, optionally
+  `ADMIN_BOOTSTRAP_EMAILS`. Remove any old `SUPABASE_*` variables.
+
+**Vercel (frontend)** — no environment variables are required. `vercel.json`
+rewrites `/api/*` to Render, so the refresh cookie is first-party to the Vercel
+domain. Remove any old `VITE_SUPABASE_*` variables.
+
+**Neon** — copy the **pooled** connection string (Connect → Pooled connection)
+into Render's `DATABASE_URL`. It must include `sslmode=require`.
 
 ## Accessibility and camera setup
 
@@ -198,8 +257,10 @@ For tracking, place the device so the instructions' relevant landmarks remain
 in view. Squats require standing side-on with hip, knee, and ankle visible;
 the 2D image-plane angle can miss knee flexion in a frontal view. Jumping jacks
 need hands and feet inside the frame; planks need a side view with shoulder,
-hip, and ankle visible. Camera access can be blocked by browser/site settings,
-another app using the camera, missing hardware, or a non-secure origin. Use
+hip, and ankle visible. High Knees need both legs in view. Follow the
+exercise-specific prompts for the required framing of push-ups, sit-ups, and
+lunges. Camera access can be blocked by browser/site settings, another app
+using the camera, missing hardware, or a non-secure origin. Use
 `localhost` while developing or serve the app over HTTPS, grant access in the
 browser prompt, and use the displayed retry guidance if startup fails. Spoken
 feedback uses browser speech synthesis when available and starts enabled; the
@@ -238,7 +299,8 @@ The current exercise analyzers are in `src/exercises/`. To add another:
    incomplete movements, missing/low-confidence landmarks, and reset behavior.
 3. Register the analyzer in `createAnalyzers()` in `src/ui/app.js`.
 4. Add the exercise's name, description, starting instruction, camera framing
-   guidance, and progress label to the `EXERCISES` map in that file.
+   guidance, and progress label to `EXERCISES` in
+   `src/ui/exercise-content.js`.
 5. Add any new feedback message IDs with English text in
    `src/feedback/messages.js`, and use those IDs from the analyzer. If a
    translation is later supplied, add it to the matching language dictionary

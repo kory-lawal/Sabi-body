@@ -161,3 +161,12 @@ test('lunges skip missing landmarks and discard cycles after tracking loss', () 
   lost.update([], 700);
   assert.equal(feed(lost, standingPose(), 800).count, 0);
 });
+
+test('lunge readiness requires a stable standing position without counting', () => {
+  const analyzer = createLungeAnalyzer();
+
+  assert.equal(analyzer.checkReady(standingPose(), 0).ready, false);
+  assert.equal(analyzer.checkReady(standingPose(), 400).ready, true);
+  assert.equal(analyzer.update(standingPose(), 401).count, 0);
+  assert.equal(analyzer.checkReady(lungePose('left'), 402).ready, false);
+});

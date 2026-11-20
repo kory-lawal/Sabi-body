@@ -6,11 +6,9 @@ export default defineConfig({
     port: 5176,
     strictPort: true,
     proxy: {
-      '/api/auth': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      '/api/coach': {
+      // All FastAPI routes (auth cookies, account data, coaching audio). /api/src/ is
+      // excluded: it holds frontend source (the shared phrase catalogue) served by Vite.
+      '^/api/(?!src/)': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },

@@ -1,4 +1,5 @@
 import { angleAt, isVisible } from './geometry.js';
+import { createStartPoseGate } from './readiness.js';
 
 const START_ANGLE = 165;
 const BEND_ANGLE = 125;
@@ -13,7 +14,47 @@ const SIDES = [
   { name: 'right', shoulder: 12, elbow: 14, wrist: 16, hip: 24 },
 ];
 
+function measureStartPose(landmarks) {
+  const measurements = {};
+  if (Array.isArray(landmarks)) {
+    for (const side of SIDES) {
+      const shoulder = landmarks[side.shoulder];
+      const elbow = landmarks[side.elbow];
+      const wrist = landmarks[side.wrist];
+      const hip = landmarks[side.hip];
+      if (![shoulder, elbow, wrist, hip].every((landmark) => isVisible(landmark))) {
+        continue;
+      }
+      const angle = angleAt(shoulder, elbow, wrist);
+      if (angle !== null) {
+        measurements[side.name] = angle;
+      }
+    }
+  }
+
+  const poseReady =
+    Object.keys(measurements).length > 0 &&
+    Object.values(measurements).every((angle) => angle >= START_ANGLE);
+  return {
+    poseReady,
+    feedbackId:
+      Object.keys(measurements).length === 0
+        ? 'body-not-visible'
+        : poseReady
+          ? null
+          : 'return-to-start',
+    rejectionReasonId:
+      Object.keys(measurements).length === 0
+        ? 'missing-landmarks'
+        : poseReady
+          ? null
+          : 'start-pose-invalid',
+    metrics: measurements,
+  };
+}
+
 export function createPushUpAnalyzer() {
+  const readinessGate = createStartPoseGate(measureStartPose);
   let count = 0;
   let armed = false;
   let pendingSide = null;
@@ -22,6 +63,7 @@ export function createPushUpAnalyzer() {
   let lastUsableAt = null;
 
   function invalidatePhase() {
+    readinessGate.reset();
     armed = false;
     pendingSide = null;
     baselineTorsoOffset = {};
@@ -168,5 +210,9 @@ export function createPushUpAnalyzer() {
     });
   }
 
-  return { update, reset, invalidatePhase };
+  function checkReady(landmarks, timestamp) {
+    return readinessGate.check(landmarks, timestamp);
+  }
+
+  return { update, reset, invalidatePhase, checkReady };
 }
