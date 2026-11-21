@@ -268,10 +268,9 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     now = utcnow()
     if session is None:
         raise _cookie_clearing_error(status.HTTP_401_UNAUTHORIZED, "no_session", "Please log in.")
-    if session.revoked_at is not None:
-        if session.revoked_reason == "rotated" and (now - session.revoked_at).total_seconds() < ROTATION_GRACE_SECONDS:
-            # Another tab refreshed at the same moment; its new cookie is already set.
-            raise api_error(status.HTTP_409_CONFLICT, "refresh_conflict", "Session refreshed in another tab; retry.")
+    in_grace = (session.revoked_at is not None and session.revoked_reason == "rotated"
+                and (now - session.revoked_at).total_seconds() < ROTATION_GRACE_SECONDS)
+    if session.revoked_at is not None and not in_grace:
         if session.revoked_reason == "rotated":
             logger.warning("Refresh token reuse detected for user %s; revoking all sessions.", session.user_id)
             revoke_user_sessions(db, session.user_id, "reuse_detected")
@@ -284,8 +283,14 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     if user is None or not user.is_active:
         raise _cookie_clearing_error(status.HTTP_401_UNAUTHORIZED, "session_revoked", "Please log in again.")
 
-    session.revoked_at = now
-    session.revoked_reason = "rotated"
+    if not in_grace:
+        session.revoked_at = now
+        session.revoked_reason = "rotated"
+    # Inside the grace window a just-rotated token is redeemed again instead of
+    # failing: the browser may never have received the new cookie (a response
+    # lost to a proxy timeout while the API was waking up, a reload mid-refresh,
+    # or another tab refreshing at the same moment). The window stays anchored
+    # to the first rotation, so replays after it still count as theft.
     session.last_used_at = now
     new_session, token = _start_session(db, user, session.remember, request)
     _maybe_bootstrap_admin(db, user)
