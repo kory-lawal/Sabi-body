@@ -32,7 +32,10 @@ def _metered_servers() -> list[dict]:
     now = time.time()
     if _cache["servers"] is not None and _cache["expires"] > now:
         return _cache["servers"]
-    url = f"https://{settings.METERED_TURN_APP}.metered.live/api/v1/turn/credentials"
+    # Accept "myapp", "myapp.metered.live" or "https://myapp.metered.live/".
+    app_name = settings.METERED_TURN_APP.lower().removeprefix("https://").removeprefix("http://").strip("/")
+    app_name = app_name.removesuffix(".metered.live")
+    url = f"https://{app_name}.metered.live/api/v1/turn/credentials"
     response = httpx.get(url, params={"apiKey": settings.METERED_TURN_API_KEY}, timeout=8)
     response.raise_for_status()
     servers = [s for s in response.json() if isinstance(s, dict) and s.get("urls")]
