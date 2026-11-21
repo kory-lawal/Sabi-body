@@ -120,6 +120,27 @@ export function createPeer({
 
   return {
     handleSignal,
+    /**
+     * Start sending a camera/mic stream on a connection that was created
+     * before it existed (e.g. the partner's offer arrived while the
+     * permission prompt was still open). Re-uses the receive-only
+     * transceivers where possible; renegotiation happens automatically.
+     */
+    addLocalStream(stream) {
+      if (closed || !stream) return;
+      for (const track of stream.getTracks?.() ?? []) {
+        const sending = pc.getSenders?.().some((s) => s.track?.kind === track.kind);
+        if (sending) continue;
+        const idle = pc.getTransceivers?.().find((t) => !t.stopped && t.receiver?.track?.kind === track.kind && !t.sender?.track);
+        if (idle) {
+          idle.direction = 'sendrecv';
+          void idle.sender.replaceTrack(track);
+          idle.sender.setStreams?.(stream);
+        } else {
+          pc.addTrack(track, stream);
+        }
+      }
+    },
     /** Replace (or remove) the outgoing audio/video tracks, e.g. after a camera restart. */
     async replaceTrack(kind, track) {
       const sender = pc.getSenders?.().find((s) => s.track?.kind === kind);

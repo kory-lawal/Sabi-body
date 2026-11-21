@@ -86,7 +86,7 @@ const ME = 'a1';
 const PARTNER = { id: 'b1', first_name: 'Bola', display_name: 'Bola Ade', username: 'bola' };
 const SESSION = { id: 's1', status: 'accepted', can_join: true, exercise_id: 'push-ups', target: 20, partner: PARTNER };
 
-function setup({ getUserMedia, session = SESSION } = {}) {
+function setup({ getUserMedia, session = SESSION, createPeerImpl } = {}) {
   const realtime = fakeRealtime();
   realtime.replies['room.join'] = (data) => ({
     session: { ...session, id: data.session_id },
@@ -106,7 +106,7 @@ function setup({ getUserMedia, session = SESSION } = {}) {
     getUser: () => ({ id: ME }),
     workout,
     mediaDevices: { getUserMedia: getUserMedia ?? (async () => stream) },
-    createPeerImpl: () => ({ handleSignal: async () => {}, replaceTrack: async () => {}, close() {}, connectionState: 'new' }),
+    createPeerImpl: createPeerImpl ?? (() => ({ handleSignal: async () => {}, replaceTrack: async () => {}, close() {}, connectionState: 'new' })),
     view: null,
     timers,
   });
@@ -257,4 +257,47 @@ test('camera "off" hides video from the partner but keeps tracking', async () =>
   assert.equal(stream.getVideoTracks()[0].stopped, false, 'tracking keeps the local camera running');
   shared.toggleMic();
   assert.equal(stream.getAudioTracks()[0].enabled, false);
+});
+
+test('an offer that arrives while the camera prompt is open waits for our media (no receive-only answer)', async () => {
+  let allow;
+  const stream = fakeStream();
+  const created = [];
+  const handled = [];
+  const { shared, realtime } = setup({
+    getUserMedia: () => new Promise((resolve) => { allow = () => resolve(stream); }),
+    createPeerImpl: (opts) => {
+      created.push(opts.localStream);
+      return { handleSignal: async (sig) => handled.push(sig), replaceTrack: async () => {}, close() {}, connectionState: 'new', addLocalStream() {} };
+    },
+  });
+  const entering = shared.enter('s1');
+  await new Promise((r) => setTimeout(r, 0));
+  realtime.emit('rtc.signal', { session_id: 's1', from: 'b1', description: { type: 'offer', sdp: 'x' } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(created.length, 0, 'no connection is built before our camera/mic is ready');
+  allow();
+  await entering;
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(created.length, 1);
+  assert.equal(created[0], stream, 'the connection carries our camera and mic');
+  assert.equal(handled[0].description.type, 'offer');
+});
+
+test('addLocalStream starts sending on receive-only transceivers', () => {
+  class TransceiverPC extends FakePC {
+    constructor(c) {
+      super(c);
+      this.transceivers = ['audio', 'video'].map((kind) => ({ direction: 'recvonly', receiver: { track: { kind } },
+        sender: { track: null, replaceTrack(t) { this.track = t; return Promise.resolve(); }, setStreams() {} } }));
+    }
+    getTransceivers() { return this.transceivers; }
+    getSenders() { return this.transceivers.map((t) => t.sender); }
+  }
+  const peer = createPeer({ polite: true, signal: () => {}, RTCPeerConnectionImpl: TransceiverPC });
+  const pc = FakePC.last;
+  const stream = fakeStream();
+  peer.addLocalStream(stream);
+  assert.deepEqual(pc.transceivers.map((t) => [t.direction, t.sender.track?.kind]), [['sendrecv', 'audio'], ['sendrecv', 'video']]);
+  assert.equal(pc.tracks.length, 0, 'reuses transceivers instead of adding duplicate tracks');
 });

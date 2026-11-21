@@ -45,6 +45,10 @@ export function createSharedWorkout({
 }) {
   let peer = null;
   let stream = null;
+  // Resolves once the first camera/mic request has finished (allowed or not),
+  // so a partner's offer never builds a connection without our media.
+  let mediaSettled = Promise.resolve();
+  let settleMedia = () => {};
   let remoteVideo = null;
   let lastSent = '';
   let lastSentAt = 0;
@@ -425,6 +429,8 @@ export function createSharedWorkout({
   });
   realtime.on('rtc.signal', async (data) => {
     if (!ours(data) || data.from === me()) return;
+    await mediaSettled;
+    if (!ours(data)) return;
     const p = await ensurePeer();
     await p?.handleSignal({ description: data.description, candidate: data.candidate });
   });
@@ -527,7 +533,13 @@ export function createSharedWorkout({
       setupWorkout(session);
       quietCoach();
       startClock();
-      await acquireMedia();
+      mediaSettled = new Promise((resolve) => { settleMedia = resolve; });
+      try {
+        await acquireMedia();
+      } finally {
+        settleMedia();
+      }
+      if (stream) peer?.addLocalStream?.(stream);
       if (!state.active) {
         stopMedia();
         return;
