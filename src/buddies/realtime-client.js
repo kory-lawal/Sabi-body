@@ -120,6 +120,9 @@ export function createRealtimeClient({
       return;
     }
     socket = ws;
+    // Some proxies (e.g. Render's) drop custom close codes, so a socket that
+    // closes before "ready" is treated like an auth failure (4401).
+    let authed = false;
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'auth', data: { token } }));
     };
@@ -130,6 +133,7 @@ export function createRealtimeClient({
       } catch {
         return;
       }
+      if (message?.type === 'ready') authed = true;
       handleMessage(message);
     };
     ws.onclose = (event) => {
@@ -151,6 +155,12 @@ export function createRealtimeClient({
           if (fresh || getToken()) scheduleReconnect(250);
           else setStatus('signed-out');
         }).catch(() => setStatus('signed-out'));
+        return;
+      }
+      if (!authed) {
+        // Closed during the handshake with no usable code: refresh the token
+        // (best effort) and retry with backoff, without signing the user out.
+        Promise.resolve(refreshToken()).catch(() => null).finally(() => scheduleReconnect());
         return;
       }
       scheduleReconnect();

@@ -174,10 +174,14 @@ class AccountsApiTests(unittest.TestCase):
         new_cookie = self.client.cookies.get("sabi_refresh")
         self.assertNotEqual(old_cookie, new_cookie)
 
-        # A replay inside the grace window is a benign multi-tab race.
+        # A replay inside the grace window (lost response, another tab) is redeemed with a fresh session.
         replay = TestClient(app)
         replay.cookies.set("sabi_refresh", old_cookie, path="/api/auth")
-        self.assertEqual(replay.post("/api/auth/refresh").status_code, 409)
+        again = replay.post("/api/auth/refresh")
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertNotIn(again.cookies.get("sabi_refresh"), (None, old_cookie, new_cookie))
+        replay = TestClient(app)
+        replay.cookies.set("sabi_refresh", old_cookie, path="/api/auth")
 
         # Outside the grace window the replay is treated as theft: every session is revoked.
         with self.db() as db:
